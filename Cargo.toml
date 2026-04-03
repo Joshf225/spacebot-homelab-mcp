@@ -1,0 +1,60 @@
+[package]
+name = "spacebot-homelab-mcp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# MCP Protocol
+rmcp = { version = "=1.1.1", features = ["server", "transport-io", "macros"] }
+schemars = "1.2"
+async-trait = "0.1"
+
+# Docker
+bollard = { version = "0.17", features = ["ssl"] }
+
+# SSH
+russh = "0.46"
+russh-keys = "0.46"
+russh-sftp = "2.1"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Concurrency
+dashmap = "6"
+parking_lot = "0.12"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Utilities
+futures = "0.3"
+tempfile = "3"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+# Integration tests will use testcontainers
+# Adding after initial implementation
+
+[[bin]]
+name = "spacebot-homelab-mcp"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

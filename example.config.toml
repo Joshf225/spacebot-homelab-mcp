@@ -1,0 +1,132 @@
+# Example configuration for spacebot-homelab-mcp
+# Place this at ~/.spacebot-homelab/config.toml
+
+# Docker hosts
+[docker.hosts.local]
+host = "unix:///var/run/docker.sock"
+
+# WARNING: Port 2375 is unencrypted Docker API. Only use on trusted networks.
+# For remote hosts, prefer TLS on port 2376 — see the [docker.hosts.secure-remote]
+# example at the bottom of this file.
+[docker.hosts.vps]
+host = "tcp://vps.example.com:2375"
+
+# SSH hosts
+[ssh.hosts.home]
+host = "192.168.1.1"
+port = 22
+user = "homelab-agent"
+private_key_path = "~/.ssh/homelab-home"
+
+[ssh.hosts.nas]
+host = "192.168.1.50"
+port = 22
+user = "homelab-agent"
+private_key_path = "~/.ssh/homelab-nas"
+
+[ssh.hosts.proxmox]
+host = "192.168.1.10"
+port = 22
+user = "homelab-agent"  # NOT root!
+private_key_path = "~/.ssh/homelab-proxmox"
+
+# SSH connection pool configuration
+[ssh.pool]
+max_sessions_per_host = 3
+max_lifetime_secs = 1800        # 30 minutes
+max_idle_time_secs = 300        # 5 minutes
+connect_timeout_secs = 10
+checkout_timeout_secs = 5
+keepalive_interval_secs = 60    # SSH keepalive probe interval
+
+# SSH command validation
+[ssh.command_allowlist]
+allowed_prefixes = [
+    "docker",
+    "zpool",
+    "zfs",
+    "df",
+    "free",
+    "uptime",
+    "systemctl status",
+    "systemctl is-active",
+    "systemctl list-units",
+    "journalctl",
+    "sudo systemctl status",
+    "sudo systemctl restart",
+    "sudo zpool",
+    "sudo zfs",
+]
+
+blocked_patterns = [
+    "rm -rf",
+    "dd if=",
+    "mkfs",
+    "fdisk",
+    "parted",
+    "> /dev/",
+    "| bash",
+    "| sh",
+    "; ",
+    "&& ",
+    "$(",
+    "`",
+]
+
+# Audit logging configuration
+[audit]
+# File path should be outside the Spacebot agent data directory
+file = "/var/log/spacebot-homelab/audit.log"
+
+# Alternative: syslog
+# [audit.syslog]
+# facility = "local0"
+# tag = "spacebot-homelab"
+
+# Rate limiting (optional)
+[rate_limits.limits]
+"docker.container.*" = { per_minute = 5 }
+"ssh.exec" = { per_minute = 10 }
+"docker.container.delete" = { per_minute = 1 }
+
+# Tools configuration (optional)
+# If the [tools] section is omitted entirely, all tools are enabled.
+# If present, only listed tools are registered with MCP (Layer 2 security).
+# Note: confirm_operation is always available regardless of this setting.
+# [tools]
+# enabled = [
+#     "docker.container.list",
+#     "docker.container.start",
+#     "docker.container.stop",
+#     "docker.container.logs",
+#     "docker.container.inspect",
+#     "ssh.exec",
+#     "ssh.upload",
+#     "ssh.download",
+# ]
+
+# Confirmation rules for destructive operations (Layer 8 security)
+# Keys are rule names; each rule matches a tool + optional command pattern.
+# [confirm.restart_services]
+# tool = "ssh.exec"
+# when_pattern = "systemctl restart"
+# message = "This will restart a systemd service. Please confirm."
+#
+# [confirm.stop_containers]
+# tool = "docker.container.stop"
+# message = "This will stop a running container. Please confirm."
+
+# Docker host with TLS (optional)
+# [docker.hosts.secure-remote]
+# host = "tcp://secure.example.com:2376"
+# cert_path = "~/.docker/cert.pem"
+# key_path = "~/.docker/key.pem"
+# ca_path = "~/.docker/ca.pem"
+
+# SSH passphrase from environment variable (optional)
+# Supports $VAR_NAME and ${VAR_NAME} syntax
+# [ssh.hosts.encrypted-key]
+# host = "10.0.0.1"
+# user = "homelab-agent"
+# private_key_path = "~/.ssh/homelab-encrypted"
+# private_key_passphrase = "${SSH_KEY_PASSPHRASE}"
