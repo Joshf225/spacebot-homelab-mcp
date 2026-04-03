@@ -111,6 +111,56 @@ impl HomelabMcpServer {
         }
     }
 
+    /// The canonical list of every tool registered with the MCP server.
+    /// Must stay in sync with the `#[tool_router]` impl below.
+    const ALL_TOOLS: &'static [(&'static str, &'static str)] = &[
+        ("docker.container.list",    "Docker"),
+        ("docker.container.start",   "Docker"),
+        ("docker.container.stop",    "Docker"),
+        ("docker.container.logs",    "Docker"),
+        ("docker.container.inspect", "Docker"),
+        ("ssh.exec",                 "SSH"),
+        ("ssh.upload",               "SSH"),
+        ("ssh.download",             "SSH"),
+        ("confirm_operation",        "Confirm"),
+    ];
+
+    /// Whether a tool is available to callers.
+    ///
+    /// `confirm_operation` is always available (exempt from `tools.enabled`),
+    /// matching the runtime behaviour in the handler. Everything else goes
+    /// through `config.tools.is_enabled`.
+    fn is_tool_available(&self, name: &str) -> bool {
+        name == "confirm_operation" || self.config.tools.is_enabled(name)
+    }
+
+    /// Total number of tools currently available (enabled by config, plus
+    /// `confirm_operation` which is always on).
+    pub fn tool_count(&self) -> usize {
+        Self::ALL_TOOLS
+            .iter()
+            .filter(|(name, _)| self.is_tool_available(name))
+            .count()
+    }
+
+    /// Human-readable tool breakdown, e.g. `"Docker (5) | SSH (3) | Confirm (1)"`.
+    pub fn tool_summary(&self) -> String {
+        let mut counts: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
+        for (name, category) in Self::ALL_TOOLS {
+            if self.is_tool_available(name) {
+                *counts.entry(category).or_insert(0) += 1;
+            }
+        }
+        // Fixed display order: Docker → SSH → Confirm
+        let order = ["Docker", "SSH", "Confirm"];
+        order
+            .iter()
+            .filter_map(|cat| counts.get(cat).map(|n| format!("{cat} ({n})")))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    }
+
     fn ensure_tool_available(&self, tool_name: &str) -> Result<(), String> {
         if !self.config.tools.is_enabled(tool_name) {
             return Err(format!(

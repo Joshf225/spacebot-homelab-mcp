@@ -12,6 +12,7 @@ mod confirmation;
 mod connection;
 mod health;
 mod mcp;
+mod notifications;
 mod rate_limit;
 mod tools;
 
@@ -60,14 +61,26 @@ async fn main() -> Result<()> {
 async fn run_server(config_path: Option<PathBuf>) -> Result<()> {
     info!("Starting spacebot-homelab-mcp server");
 
-    let config = Arc::new(Config::load(config_path)?);
+    let config = match Config::load(config_path) {
+        Ok(cfg) => Arc::new(cfg),
+        Err(error) => {
+            notifications::notify_failed(&format!("Config error: {error}"));
+            return Err(error);
+        }
+    };
     info!(
         "Configuration loaded: {} Docker hosts, {} SSH hosts",
         config.docker.len(),
         config.ssh.hosts.len()
     );
 
-    let manager = Arc::new(ConnectionManager::new((*config).clone()).await?);
+    let manager = match ConnectionManager::new((*config).clone()).await {
+        Ok(mgr) => Arc::new(mgr),
+        Err(error) => {
+            notifications::notify_failed(&format!("Connection error: {error}"));
+            return Err(error);
+        }
+    };
     let audit = Arc::new(AuditLogger::new(config.clone()));
     info!("Connection manager initialized");
 
@@ -75,12 +88,25 @@ async fn run_server(config_path: Option<PathBuf>) -> Result<()> {
     info!("Health monitor started");
 
     let server = HomelabMcpServer::new(config, manager.clone(), audit);
+
+    // Capture tool info before `server` is consumed by `serve_server`.
+    let tool_count = server.tool_count();
+    let tool_summary = server.tool_summary();
+
     let transport = rmcp::transport::io::stdio();
-    let service = rmcp::serve_server(server, transport).await?;
+    let service = match rmcp::serve_server(server, transport).await {
+        Ok(svc) => svc,
+        Err(error) => {
+            notifications::notify_failed(&format!("MCP server error: {error}"));
+            return Err(error.into());
+        }
+    };
     let cancellation = service.cancellation_token();
     let wait_for_service = service.waiting();
     tokio::pin!(wait_for_service);
 
+    // MCP connection is established — tools are live.
+    notifications::notify_connected(tool_count, &tool_summary);
     info!("MCP server started, waiting for messages...");
 
     tokio::select! {

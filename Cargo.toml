@@ -3,7 +3,12 @@ name = "spacebot-homelab-mcp"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["notifications"]
+notifications = ["dep:notify-rust"]
+
 [dependencies]
+notify-rust = { version = "4", optional = true }
 # MCP Protocol
 rmcp = { version = "=1.1.1", features = ["server", "transport-io", "macros"] }
 schemars = "1.2"

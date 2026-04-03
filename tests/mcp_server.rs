@@ -27,6 +27,7 @@ async fn spawn_server(config: &Path) -> Child {
     let mut command = Command::new(binary_path());
     command
         .args(["server", "--config", &config_path(config)])
+        .env("SPACEBOT_HOMELAB_NO_NOTIFY", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
