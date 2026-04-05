@@ -109,18 +109,44 @@ main() {
     echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
   fi
 
+  # Offer interactive setup wizard, or print manual next steps
   printf "\n"
+  if [ -t 0 ] && [ -t 1 ]; then
+    info "Setup wizard available!"
+    echo "  The setup wizard will walk you through configuring SSH hosts,"
+    echo "  Docker connections, confirmation rules, and rate limits."
+    printf "\n"
+    read -r -p "  Start the setup wizard now? [Y/n] " answer </dev/tty
+    case "${answer:-Y}" in
+      [nN]*)
+        print_next_steps
+        ;;
+      *)
+        printf "\n"
+        "${INSTALL_DIR}/${BINARY}" setup </dev/tty
+        ;;
+    esac
+  else
+    print_next_steps
+  fi
+}
+
+print_next_steps() {
   info "Next steps:"
-  echo "  1. Create config: cp example.config.toml ~/.spacebot-homelab/config.toml"
+  echo "  1. Run the setup wizard:"
+  echo "     ${BINARY} setup"
+  echo ""
+  echo "  Or configure manually:"
+  echo "  1. Create config: mkdir -p ~/.config/spacebot-homelab-mcp && cp example.config.toml ~/.config/spacebot-homelab-mcp/config.toml"
   echo "  2. Edit config with your Docker/SSH hosts"
-  echo "  3. Validate: ${BINARY} doctor --config ~/.spacebot-homelab/config.toml"
+  echo "  3. Validate: ${BINARY} doctor --config ~/.config/spacebot-homelab-mcp/config.toml"
   echo "  4. Add to Spacebot config.toml:"
   echo ""
   echo "     [[mcp_servers]]"
   echo "     name = \"homelab\""
   echo "     transport = \"stdio\""
   echo "     command = \"${BINARY}\""
-  echo "     args = [\"server\", \"--config\", \"~/.spacebot-homelab/config.toml\"]"
+  echo "     args = [\"server\", \"--config\", \"~/.config/spacebot-homelab-mcp/config.toml\"]"
 }
 
 main
