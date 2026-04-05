@@ -100,12 +100,12 @@ pub async fn exec_confirmed(
         return Err(error);
     }
 
-    let session = manager.ssh_checkout(&host).await?;
+    let acquired = manager.ssh_acquire_channel(&host).await?;
     let mut broken = false;
     let timeout_duration = Duration::from_secs(timeout_secs.unwrap_or(30).min(300));
 
     let execution = timeout(timeout_duration, async {
-        let mut channel = session
+        let mut channel = acquired
             .handle
             .channel_open_session()
             .await
@@ -169,7 +169,7 @@ pub async fn exec_confirmed(
         }
     };
 
-    manager.ssh_return(&host, session, broken).await;
+    manager.ssh_release_channel(&host, acquired, broken).await;
     result
 }
 
@@ -194,10 +194,10 @@ pub async fn upload(
         ));
     }
 
-    let session = manager.ssh_checkout(&host).await?;
+    let acquired = manager.ssh_acquire_channel(&host).await?;
     let mut broken = false;
     let result: Result<String> = async {
-        let channel = session
+        let channel = acquired
             .handle
             .channel_open_session()
             .await
@@ -228,7 +228,7 @@ pub async fn upload(
     if result.is_err() {
         broken = true;
     }
-    manager.ssh_return(&host, session, broken).await;
+    manager.ssh_release_channel(&host, acquired, broken).await;
 
     match result {
         Ok(output) => {
@@ -262,10 +262,10 @@ pub async fn download(
         )
     });
 
-    let session = manager.ssh_checkout(&host).await?;
+    let acquired = manager.ssh_acquire_channel(&host).await?;
     let mut broken = false;
     let result: Result<String> = async {
-        let channel = session
+        let channel = acquired
             .handle
             .channel_open_session()
             .await
@@ -311,7 +311,7 @@ pub async fn download(
     if result.is_err() {
         broken = true;
     }
-    manager.ssh_return(&host, session, broken).await;
+    manager.ssh_release_channel(&host, acquired, broken).await;
 
     match result {
         Ok(output) => {

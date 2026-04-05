@@ -1,5 +1,7 @@
 /// Docker container tools
 pub mod docker;
+/// Docker image tools
+pub mod docker_image;
 /// SSH tools
 pub mod ssh;
 

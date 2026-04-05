@@ -2,10 +2,18 @@
 name = "spacebot-homelab-mcp"
 version = "0.1.0"
 edition = "2024"
+description = "MCP server providing Docker and SSH tools for managing homelab infrastructure via Spacebot"
+license = "MIT"
+repository = "https://github.com/Joshf225/spacebot-homelab-mcp"
+homepage = "https://github.com/Joshf225/spacebot-homelab-mcp"
+keywords = ["mcp", "spacebot", "docker", "ssh", "homelab"]
+categories = ["command-line-utilities", "development-tools"]
+rust-version = "1.85"
 
 [features]
-default = ["notifications"]
+default = ["notifications", "metrics"]
 notifications = ["dep:notify-rust"]
+metrics = ["dep:axum"]
 
 [dependencies]
 notify-rust = { version = "4", optional = true }
@@ -37,6 +45,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # Concurrency
 dashmap = "6"
 parking_lot = "0.12"
+
+# Metrics
+prometheus = { version = "0.13", default-features = false }
+axum = { version = "0.7", default-features = false, features = ["http1", "tokio"], optional = true }
 
 # CLI
 clap = { version = "4", features = ["derive"] }

@@ -12,6 +12,7 @@ mod confirmation;
 mod connection;
 mod health;
 mod mcp;
+mod metrics;
 mod notifications;
 mod rate_limit;
 mod tools;
@@ -74,7 +75,15 @@ async fn run_server(config_path: Option<PathBuf>) -> Result<()> {
         config.ssh.hosts.len()
     );
 
-    let manager = match ConnectionManager::new((*config).clone()).await {
+    // Create metrics if configured
+    let metrics = if config.metrics.enabled {
+        Some(Arc::new(crate::metrics::Metrics::new()))
+    } else {
+        None
+    };
+    let metrics_listen = config.metrics.listen.clone();
+
+    let manager = match ConnectionManager::new((*config).clone(), metrics.clone()).await {
         Ok(mgr) => Arc::new(mgr),
         Err(error) => {
             notifications::notify_failed(&format!("Connection error: {error}"));
@@ -87,7 +96,7 @@ async fn run_server(config_path: Option<PathBuf>) -> Result<()> {
     let health_handle = manager.spawn_health_monitor();
     info!("Health monitor started");
 
-    let server = HomelabMcpServer::new(config, manager.clone(), audit);
+    let server = HomelabMcpServer::new(config, manager.clone(), audit, metrics.clone());
 
     // Capture tool info before `server` is consumed by `serve_server`.
     let tool_count = server.tool_count();
@@ -109,6 +118,14 @@ async fn run_server(config_path: Option<PathBuf>) -> Result<()> {
     notifications::notify_connected(tool_count, &tool_summary);
     info!("MCP server started, waiting for messages...");
 
+    // Start metrics HTTP server if configured
+    #[cfg(feature = "metrics")]
+    let metrics_handle = if let Some(ref m) = metrics {
+        Some(crate::metrics::spawn_metrics_server(&metrics_listen, m.clone()))
+    } else {
+        None
+    };
+
     tokio::select! {
         result = &mut wait_for_service => {
             match result {
@@ -129,6 +146,10 @@ async fn run_server(config_path: Option<PathBuf>) -> Result<()> {
     }
 
     health_handle.abort();
+    #[cfg(feature = "metrics")]
+    if let Some(handle) = metrics_handle {
+        handle.abort();
+    }
     manager.close_all().await;
     Ok(())
 }

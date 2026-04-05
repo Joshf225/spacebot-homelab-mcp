@@ -1,11 +1,13 @@
 use anyhow::{Result, anyhow};
-use bollard::container::{InspectContainerOptions, ListContainersOptions, LogsOptions, StartContainerOptions, StopContainerOptions};
+use bollard::container::{CreateContainerOptions, Config as ContainerConfig, InspectContainerOptions, ListContainersOptions, LogsOptions, RemoveContainerOptions, StartContainerOptions, StopContainerOptions};
+use bollard::models::{HostConfig, PortBinding, RestartPolicy, RestartPolicyNameEnum};
 use futures::StreamExt;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::audit::AuditLogger;
+use crate::confirmation::ConfirmationManager;
 use crate::connection::ConnectionManager;
 use crate::tools::{truncate_output, wrap_output_envelope};
 
@@ -323,6 +325,355 @@ pub async fn container_inspect(
     }
 }
 
+pub async fn container_delete(
+    manager: Arc<ConnectionManager>,
+    confirmation: Arc<ConfirmationManager>,
+    host: Option<String>,
+    container: String,
+    dry_run: Option<bool>,
+    force: Option<bool>,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let host = host.unwrap_or_else(|| "local".to_string());
+    let force = force.unwrap_or(false);
+
+    // Layer 3: dry_run support
+    if dry_run.unwrap_or(false) {
+        let output = format!(
+            "DRY RUN: Would delete container '{}' on Docker host '{}'. \
+             force={}. Set dry_run=false to execute.",
+            container, host, force
+        );
+        audit
+            .log("docker.container.delete", &host, "dry_run", Some(&container))
+            .await
+            .ok();
+        return Ok(wrap_output_envelope("docker.container.delete", &output));
+    }
+
+    // Layer 8: Confirmation flow — must happen BEFORE any execution
+    let params_json = serde_json::json!({
+        "host": host,
+        "container": container,
+        "force": force,
+    })
+    .to_string();
+
+    if let Some(response) = confirmation
+        .check_and_maybe_require(
+            "docker.container.delete",
+            None, // No command text for docker tools — confirmation is "always"
+            &format!(
+                "About to DELETE container '{}' on Docker host '{}'. This is irreversible.",
+                container, host
+            ),
+            &params_json,
+        )
+        .await?
+    {
+        audit
+            .log(
+                "docker.container.delete",
+                &host,
+                "confirmation_required",
+                Some(&container),
+            )
+            .await
+            .ok();
+        return Ok(response);
+    }
+
+    // Execution proceeds only after confirmation (or if no confirmation rule configured)
+    container_delete_confirmed(manager, host, container, force, audit).await
+}
+
+/// Execute container delete after confirmation has been satisfied.
+/// Called directly by `confirm_operation` for confirmed tokens.
+pub async fn container_delete_confirmed(
+    manager: Arc<ConnectionManager>,
+    host: String,
+    container: String,
+    force: bool,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let result: Result<String> = async {
+        let docker = manager.get_docker(&host)?;
+
+        // Pre-flight: verify container exists and get its state
+        let details = docker
+            .as_bollard()
+            .inspect_container(&container, None::<InspectContainerOptions>)
+            .await
+            .map_err(|error| {
+                anyhow!("Container '{}' not found or inaccessible: {}", container, error)
+            })?;
+
+        // Pre-flight: check if container is running
+        let is_running = details
+            .state
+            .as_ref()
+            .and_then(|state| state.running)
+            .unwrap_or(false);
+
+        if is_running && !force {
+            return Err(anyhow!(
+                "Container '{}' is currently running. Stop it first, or set force=true to force-remove.",
+                container
+            ));
+        }
+
+        // Pre-flight: warn about attached volumes (per security-approach.md lines 96-102)
+        let volume_count = details
+            .mounts
+            .as_ref()
+            .map(|mounts| mounts.len())
+            .unwrap_or(0);
+
+        if volume_count > 0 && !force {
+            return Err(anyhow!(
+                "Container '{}' has {} volume(s) attached. Data may be lost. \
+                 Set force=true to override.",
+                container,
+                volume_count
+            ));
+        }
+
+        // Execute deletion
+        // force: true sends SIGKILL if running (when force param is set)
+        // v: false — do NOT remove anonymous volumes by default (data safety)
+        docker
+            .as_bollard()
+            .remove_container(
+                &container,
+                Some(RemoveContainerOptions {
+                    force,
+                    v: false,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .map_err(|error| {
+                anyhow!("Failed to delete container '{}': {}", container, error)
+            })?;
+
+        let mut output = format!("Deleted container '{}' on Docker host '{}'.", container, host);
+        if volume_count > 0 {
+            output.push_str(&format!(
+                " Note: {} volume(s) were attached. Anonymous volumes were NOT removed.",
+                volume_count
+            ));
+        }
+
+        Ok(output)
+    }
+    .await;
+
+    match result {
+        Ok(output) => {
+            audit
+                .log("docker.container.delete", &host, "success", Some(&container))
+                .await
+                .ok();
+            Ok(wrap_output_envelope("docker.container.delete", &output))
+        }
+        Err(error) => {
+            audit
+                .log(
+                    "docker.container.delete",
+                    &host,
+                    "error",
+                    Some(&error.to_string()),
+                )
+                .await
+                .ok();
+            Err(error)
+        }
+    }
+}
+
+pub async fn container_create(
+    manager: Arc<ConnectionManager>,
+    host: Option<String>,
+    image: String,
+    name: String,
+    ports: Option<HashMap<String, String>>,
+    env: Option<Vec<String>>,
+    volumes: Option<Vec<String>>,
+    restart_policy: Option<String>,
+    dry_run: Option<bool>,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let host = host.unwrap_or_else(|| "local".to_string());
+
+    // Validate name: Docker container names must match [a-zA-Z0-9][a-zA-Z0-9_.-]
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-') {
+        return Err(anyhow!(
+            "Invalid container name '{}'. Must contain only alphanumeric characters, underscores, dots, or hyphens.",
+            name
+        ));
+    }
+
+    // Layer 3: dry_run support
+    if dry_run.unwrap_or(false) {
+        let output = format!(
+            "DRY RUN: Would create container '{}' from image '{}' on Docker host '{}'.\n\
+             Ports: {}\n\
+             Env vars: {} configured\n\
+             Volumes: {}\n\
+             Restart policy: {}",
+            name,
+            image,
+            host,
+            ports
+                .as_ref()
+                .map(|p| format!("{:?}", p))
+                .unwrap_or_else(|| "none".to_string()),
+            env.as_ref().map(|e| e.len()).unwrap_or(0),
+            volumes
+                .as_ref()
+                .map(|v| format!("{:?}", v))
+                .unwrap_or_else(|| "none".to_string()),
+            restart_policy.as_deref().unwrap_or("no"),
+        );
+        audit
+            .log("docker.container.create", &host, "dry_run", Some(&name))
+            .await
+            .ok();
+        return Ok(wrap_output_envelope("docker.container.create", &output));
+    }
+
+    let result: Result<String> = async {
+        let docker = manager.get_docker(&host)?;
+
+        // Build port bindings: "8080:80" → container port 80/tcp → host port 8080
+        let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
+        let mut exposed_ports: HashMap<String, HashMap<(), ()>> = HashMap::new();
+
+        if let Some(ref port_map) = ports {
+            for (host_port, container_port) in port_map {
+                let container_key = if container_port.contains('/') {
+                    container_port.clone()
+                } else {
+                    format!("{}/tcp", container_port)
+                };
+
+                exposed_ports.insert(container_key.clone(), HashMap::new());
+                port_bindings.insert(
+                    container_key,
+                    Some(vec![PortBinding {
+                        host_ip: Some("0.0.0.0".to_string()),
+                        host_port: Some(host_port.clone()),
+                    }]),
+                );
+            }
+        }
+
+        // Build volume binds: "/host/path:/container/path" format
+        let binds = volumes.clone();
+
+        // Build restart policy
+        let restart = restart_policy.as_deref().map(|policy| {
+            match policy {
+                "always" => RestartPolicy {
+                    name: Some(RestartPolicyNameEnum::ALWAYS),
+                    maximum_retry_count: None,
+                },
+                "unless-stopped" => RestartPolicy {
+                    name: Some(RestartPolicyNameEnum::UNLESS_STOPPED),
+                    maximum_retry_count: None,
+                },
+                "on-failure" => RestartPolicy {
+                    name: Some(RestartPolicyNameEnum::ON_FAILURE),
+                    maximum_retry_count: Some(3),
+                },
+                _ => RestartPolicy {
+                    name: Some(RestartPolicyNameEnum::NO),
+                    maximum_retry_count: None,
+                },
+            }
+        });
+
+        let host_config = HostConfig {
+            port_bindings: if port_bindings.is_empty() {
+                None
+            } else {
+                Some(port_bindings)
+            },
+            binds,
+            restart_policy: restart,
+            ..Default::default()
+        };
+
+        let container_config = ContainerConfig {
+            image: Some(image.clone()),
+            env: env.clone(),
+            exposed_ports: if exposed_ports.is_empty() {
+                None
+            } else {
+                Some(exposed_ports)
+            },
+            host_config: Some(host_config),
+            ..Default::default()
+        };
+
+        let response = docker
+            .as_bollard()
+            .create_container(
+                Some(CreateContainerOptions {
+                    name: name.as_str(),
+                    platform: None,
+                }),
+                container_config,
+            )
+            .await
+            .map_err(|error| {
+                anyhow!("Failed to create container '{}': {}", name, error)
+            })?;
+
+        let mut output = format!(
+            "Created container '{}' (ID: {}) from image '{}' on Docker host '{}'.",
+            name,
+            response.id.chars().take(12).collect::<String>(),
+            image,
+            host
+        );
+
+        if !response.warnings.is_empty() {
+            output.push_str("\nWarnings:");
+            for warning in &response.warnings {
+                output.push_str(&format!("\n  - {}", warning));
+            }
+        }
+
+        output.push_str("\n\nContainer created but NOT started. Use docker.container.start to start it.");
+
+        Ok(output)
+    }
+    .await;
+
+    match result {
+        Ok(output) => {
+            audit
+                .log("docker.container.create", &host, "success", Some(&name))
+                .await
+                .ok();
+            Ok(wrap_output_envelope("docker.container.create", &output))
+        }
+        Err(error) => {
+            audit
+                .log(
+                    "docker.container.create",
+                    &host,
+                    "error",
+                    Some(&error.to_string()),
+                )
+                .await
+                .ok();
+            Err(error)
+        }
+    }
+}
+
 fn redact_env_values(value: &mut Value) {
     if let Some(env_values) = value
         .get_mut("Config")
@@ -361,5 +712,16 @@ mod tests {
         let env = value["Config"]["Env"].as_array().unwrap();
         assert_eq!(env[0], "SECRET=<redacted>");
         assert_eq!(env[1], "PATH=<redacted>");
+    }
+
+    #[test]
+    fn test_container_name_validation() {
+        // Valid names
+        assert!("my-container".chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-'));
+        assert!("webapp.v2".chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-'));
+
+        // Invalid names
+        assert!(!"my container".chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-'));
+        assert!(!"rm -rf /".chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-'));
     }
 }

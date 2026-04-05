@@ -21,6 +21,8 @@ pub struct Config {
     pub tools: ToolsConfig,
     #[serde(default)]
     pub confirm: Option<HashMap<String, ConfirmRule>>,
+    #[serde(default)]
+    pub metrics: MetricsConfig,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -92,6 +94,10 @@ pub struct SshPoolConfig {
     pub checkout_timeout_secs: u64,
     #[serde(default = "default_keepalive_interval")]
     pub keepalive_interval_secs: u64,
+    /// Maximum concurrent channels per SSH session.
+    /// Default: 10. Set to 1 to disable multiplexing (V1 behavior).
+    #[serde(default = "default_max_channels")]
+    pub max_channels_per_session: usize,
 }
 
 impl Default for SshPoolConfig {
@@ -103,6 +109,7 @@ impl Default for SshPoolConfig {
             connect_timeout_secs: default_connect_timeout(),
             checkout_timeout_secs: default_checkout_timeout(),
             keepalive_interval_secs: default_keepalive_interval(),
+            max_channels_per_session: default_max_channels(),
         }
     }
 }
@@ -129,6 +136,10 @@ fn default_checkout_timeout() -> u64 {
 
 fn default_keepalive_interval() -> u64 {
     60
+}
+
+fn default_max_channels() -> usize {
+    10
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -189,7 +200,18 @@ pub struct SyslogConfig {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RateLimitMode {
+    #[default]
+    Global,
+    PerCaller,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct RateLimitConfig {
+    /// Rate limiting mode: "global" (default) or "per_caller"
+    #[serde(default)]
+    pub mode: RateLimitMode,
     #[serde(default)]
     pub limits: HashMap<String, RateLimit>,
 }
@@ -218,6 +240,20 @@ impl ToolsConfig {
             Some(list) => list.iter().any(|tool| tool == name),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MetricsConfig {
+    /// Enable Prometheus metrics endpoint
+    #[serde(default)]
+    pub enabled: bool,
+    /// Listen address for the metrics HTTP server (default: "127.0.0.1:9090")
+    #[serde(default = "default_metrics_listen")]
+    pub listen: String,
+}
+
+fn default_metrics_listen() -> String {
+    "127.0.0.1:9090".to_string()
 }
 
 impl Config {

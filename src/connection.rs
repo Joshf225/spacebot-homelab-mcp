@@ -1,10 +1,8 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use dashmap::DashMap;
-use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 use tokio::sync::{Mutex, Notify};
 use tokio::time::{Duration, interval, sleep, timeout};
@@ -18,6 +16,7 @@ pub struct ConnectionManager {
     docker_clients: DashMap<String, DockerClient>,
     ssh_pools: DashMap<String, SshPool>,
     health: DashMap<String, ConnectionHealth>,
+    metrics: Option<Arc<crate::metrics::Metrics>>,
 }
 
 /// Docker connection handle with transport metadata for diagnostics.
@@ -152,21 +151,31 @@ impl DockerClient {
 }
 
 /// SSH connection pool for a single host.
+/// Sessions are shared: multiple channels can be multiplexed over a single session.
 #[derive(Clone)]
 pub struct SshPool {
-    sessions: Arc<Mutex<VecDeque<PooledSession>>>,
-    active_count: Arc<AtomicUsize>,
-    total_count: Arc<AtomicUsize>,
+    sessions: Arc<Mutex<Vec<SharedSession>>>,
     max_sessions: usize,
+    max_channels_per_session: usize,
     session_available: Arc<Notify>,
     host_config: Arc<SshHost>,
     pool_config: SshPoolConfig,
 }
 
-pub struct PooledSession {
-    pub handle: russh::client::Handle<SshClientHandler>,
+/// A shared SSH session that can serve multiple concurrent channels.
+struct SharedSession {
+    handle: Arc<russh::client::Handle<SshClientHandler>>,
     created_at: Instant,
     last_used: Instant,
+    /// Number of channels currently open on this session.
+    active_channels: usize,
+}
+
+/// An acquired channel from the pool. Must be released via `release_channel`.
+pub struct AcquiredChannel {
+    pub handle: Arc<russh::client::Handle<SshClientHandler>>,
+    session_index: usize,
+    host_name: String,
 }
 
 #[derive(Clone)]
@@ -243,54 +252,80 @@ impl russh::client::Handler for SshClientHandler {
 impl SshPool {
     pub fn new(host_config: SshHost, pool_config: SshPoolConfig) -> Self {
         Self {
-            sessions: Arc::new(Mutex::new(VecDeque::new())),
-            active_count: Arc::new(AtomicUsize::new(0)),
-            total_count: Arc::new(AtomicUsize::new(0)),
+            sessions: Arc::new(Mutex::new(Vec::new())),
             max_sessions: pool_config.max_sessions_per_host,
+            max_channels_per_session: pool_config.max_channels_per_session,
             session_available: Arc::new(Notify::new()),
             host_config: Arc::new(host_config),
             pool_config,
         }
     }
 
-    pub async fn checkout(&self) -> Result<PooledSession> {
+    /// Acquire a channel from the pool. If an existing session has capacity,
+    /// opens a new channel on it. Otherwise creates a new session (if under limit)
+    /// or waits for capacity.
+    pub async fn acquire_channel(&self) -> Result<AcquiredChannel> {
         loop {
             {
                 let mut sessions = self.sessions.lock().await;
-                while let Some(mut session) = sessions.pop_front() {
-                    if self.validate_session(&session) {
-                        session.last_used = Instant::now();
-                        self.active_count.fetch_add(1, Ordering::Relaxed);
-                        return Ok(session);
-                    }
 
-                    self.total_count.fetch_sub(1, Ordering::Relaxed);
+                // First pass: find an existing session with channel capacity
+                // Prefer the session with the fewest active channels (load balancing)
+                let best_index = sessions
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, session)| {
+                        session.active_channels < self.max_channels_per_session
+                            && self.validate_session_age(session)
+                    })
+                    .min_by_key(|(_, session)| session.active_channels)
+                    .map(|(index, _)| index);
+
+                if let Some(index) = best_index {
+                    sessions[index].active_channels += 1;
+                    sessions[index].last_used = Instant::now();
+
+                    return Ok(AcquiredChannel {
+                        handle: sessions[index].handle.clone(),
+                        session_index: index,
+                        host_name: self.host_config.host.clone(),
+                    });
                 }
-            }
 
-            if self.total_count.load(Ordering::Relaxed) < self.max_sessions {
-                let session = match self.create_session().await {
-                    Ok(session) => session,
-                    Err(first_error) => {
-                        warn!(
-                            "SSH connection to {} failed, retrying once: {}",
-                            self.host_config.host,
-                            first_error
-                        );
-                        sleep(Duration::from_secs(1)).await;
-                        self.create_session().await.map_err(|retry_error| {
-                            anyhow!(
-                                "SSH connection failed after retry. First: {}. Retry: {}",
-                                first_error,
-                                retry_error
-                            )
-                        })?
-                    }
-                };
+                // Second pass: can we create a new session?
+                if sessions.len() < self.max_sessions {
+                    drop(sessions); // Release lock during connection
+                    let session = match self.create_shared_session().await {
+                        Ok(session) => session,
+                        Err(first_error) => {
+                            warn!(
+                                "SSH connection to {} failed, retrying once: {}",
+                                self.host_config.host, first_error
+                            );
+                            sleep(Duration::from_secs(1)).await;
+                            self.create_shared_session().await.map_err(|retry_error| {
+                                anyhow!(
+                                    "SSH connection failed after retry. First: {}. Retry: {}",
+                                    first_error,
+                                    retry_error
+                                )
+                            })?
+                        }
+                    };
 
-                self.total_count.fetch_add(1, Ordering::Relaxed);
-                self.active_count.fetch_add(1, Ordering::Relaxed);
-                return Ok(session);
+                    let mut sessions = self.sessions.lock().await;
+                    let index = sessions.len();
+                    sessions.push(session);
+                    sessions[index].active_channels += 1;
+
+                    return Ok(AcquiredChannel {
+                        handle: sessions[index].handle.clone(),
+                        session_index: index,
+                        host_name: self.host_config.host.clone(),
+                    });
+                }
+
+                // All sessions at capacity and at session limit — need to wait
             }
 
             let wait_duration = Duration::from_secs(self.pool_config.checkout_timeout_secs);
@@ -298,39 +333,41 @@ impl SshPool {
                 .await
                 .map_err(|_| {
                     anyhow!(
-                        "All SSH sessions to '{}' are in use ({} active). Try again shortly.",
+                        "All SSH sessions to '{}' are at channel capacity ({} sessions x {} channels). Try again shortly.",
                         self.host_config.host,
-                        self.active_count.load(Ordering::Relaxed)
+                        self.max_sessions,
+                        self.max_channels_per_session
                     )
                 })?;
         }
     }
 
-    pub async fn return_session(&self, mut session: PooledSession, broken: bool) {
-        self.active_count.fetch_sub(1, Ordering::Relaxed);
+    /// Release a channel back to the pool.
+    pub async fn release_channel(&self, channel: AcquiredChannel, broken: bool) {
+        let mut sessions = self.sessions.lock().await;
 
-        if broken || !self.validate_session(&session) {
-            self.total_count.fetch_sub(1, Ordering::Relaxed);
-        } else {
+        if let Some(session) = sessions.get_mut(channel.session_index) {
+            session.active_channels = session.active_channels.saturating_sub(1);
             session.last_used = Instant::now();
-            let mut sessions = self.sessions.lock().await;
-            sessions.push_back(session);
+
+            if broken && session.active_channels == 0 {
+                sessions.remove(channel.session_index);
+                info!(
+                    "Removed broken SSH session for {} (index {})",
+                    channel.host_name, channel.session_index
+                );
+            }
         }
 
         self.session_available.notify_one();
     }
 
-    fn validate_session(&self, session: &PooledSession) -> bool {
+    fn validate_session_age(&self, session: &SharedSession) -> bool {
         let max_lifetime = Duration::from_secs(self.pool_config.max_lifetime_secs);
-        if session.created_at.elapsed() > max_lifetime {
-            return false;
-        }
-
-        let max_idle = Duration::from_secs(self.pool_config.max_idle_time_secs);
-        session.last_used.elapsed() <= max_idle
+        session.created_at.elapsed() <= max_lifetime
     }
 
-    async fn create_session(&self) -> Result<PooledSession> {
+    async fn create_shared_session(&self) -> Result<SharedSession> {
         let config = russh::client::Config {
             inactivity_timeout: Some(Duration::from_secs(self.pool_config.connect_timeout_secs)),
             keepalive_interval: Some(Duration::from_secs(self.pool_config.keepalive_interval_secs)),
@@ -402,110 +439,50 @@ impl SshPool {
             ));
         }
 
-        Ok(PooledSession {
-            handle,
+        Ok(SharedSession {
+            handle: Arc::new(handle),
             created_at: Instant::now(),
             last_used: Instant::now(),
+            active_channels: 0,
         })
     }
 
     pub async fn cleanup_stale_sessions(&self) {
         let max_lifetime = Duration::from_secs(self.pool_config.max_lifetime_secs);
         let max_idle = Duration::from_secs(self.pool_config.max_idle_time_secs);
-        let keepalive_threshold = Duration::from_secs(self.pool_config.keepalive_interval_secs);
 
-        // Phase 1: Remove expired sessions, separate idle sessions for probing
-        let sessions_to_probe: Vec<PooledSession> = {
-            let mut sessions = self.sessions.lock().await;
-            let before = sessions.len();
+        let mut sessions = self.sessions.lock().await;
+        let before = sessions.len();
 
-            // Remove sessions that exceeded lifetime or idle time
-            sessions.retain(|session| {
-                session.created_at.elapsed() <= max_lifetime
-                    && session.last_used.elapsed() <= max_idle
-            });
-            let expired = before.saturating_sub(sessions.len());
-            if expired > 0 {
-                self.total_count.fetch_sub(expired, Ordering::Relaxed);
-                info!(
-                    "Cleaned up {} expired SSH sessions for {}",
-                    expired, self.host_config.host
-                );
+        sessions.retain(|session| {
+            // Never remove sessions with active channels
+            if session.active_channels > 0 {
+                return true;
             }
+            session.created_at.elapsed() <= max_lifetime
+                && session.last_used.elapsed() <= max_idle
+        });
 
-            // Extract sessions idle longer than keepalive threshold for async probing
-            let mut remaining = VecDeque::new();
-            let mut to_probe = Vec::new();
-            for session in sessions.drain(..) {
-                if session.last_used.elapsed() > keepalive_threshold {
-                    to_probe.push(session);
-                } else {
-                    remaining.push_back(session);
-                }
-            }
-            *sessions = remaining;
-
-            to_probe
-        };
-        // Lock released — other checkouts/returns are unblocked during probing
-
-        if sessions_to_probe.is_empty() {
-            return;
-        }
-
-        // Phase 2: Async keepalive probe on idle sessions (no lock held)
-        let mut alive = Vec::new();
-        let mut dead: usize = 0;
-
-        for session in sessions_to_probe {
-            let probe_result = timeout(Duration::from_secs(3), async {
-                match session.handle.channel_open_session().await {
-                    Ok(channel) => {
-                        channel.close().await.ok();
-                        true
-                    }
-                    Err(_) => false,
-                }
-            })
-            .await;
-
-            match probe_result {
-                Ok(true) => alive.push(session),
-                _ => dead += 1,
-            }
-        }
-
-        // Phase 3: Return alive sessions to the pool
-        if !alive.is_empty() {
-            let mut sessions = self.sessions.lock().await;
-            for session in alive {
-                sessions.push_back(session);
-            }
-        }
-
-        if dead > 0 {
-            self.total_count.fetch_sub(dead, Ordering::Relaxed);
+        let removed = before.saturating_sub(sessions.len());
+        if removed > 0 {
             info!(
-                "Removed {} dead SSH sessions for {} (keepalive probe failed)",
-                dead, self.host_config.host
+                "Cleaned up {} stale SSH sessions for {}",
+                removed, self.host_config.host
             );
         }
     }
 
     pub async fn check_connectivity(&self) -> Result<()> {
-        // If the pool has recently-used valid sessions, the host was reachable recently.
-        // This avoids creating a wasteful disposable connection every 30s.
         {
             let sessions = self.sessions.lock().await;
             for session in sessions.iter() {
-                if self.validate_session(session) {
+                if self.validate_session_age(session) {
                     return Ok(());
                 }
             }
         }
 
-        // No valid pooled sessions — create a test connection to verify reachability
-        let session = self.create_session().await?;
+        let session = self.create_shared_session().await?;
         session
             .handle
             .disconnect(russh::Disconnect::ByApplication, "health check complete", "en")
@@ -517,7 +494,19 @@ impl SshPool {
     pub async fn close_all(&self) {
         let mut sessions = self.sessions.lock().await;
         sessions.clear();
-        self.total_count.store(0, Ordering::Relaxed);
+    }
+
+    /// Get the total number of sessions in the pool.
+    /// NOTE: This is async because it requires acquiring the session lock.
+    /// M9's health monitor may need to call this instead of atomic loads.
+    /// The orchestrator will resolve any M9/M10 conflicts here.
+    pub async fn session_count(&self) -> usize {
+        self.sessions.lock().await.len()
+    }
+
+    /// Get the total number of active channels across all sessions.
+    pub async fn active_channel_count(&self) -> usize {
+        self.sessions.lock().await.iter().map(|s| s.active_channels).sum()
     }
 }
 
@@ -540,12 +529,13 @@ pub enum ConnectionStatus {
 }
 
 impl ConnectionManager {
-    pub async fn new(config: Config) -> Result<Self> {
+    pub async fn new(config: Config, metrics: Option<Arc<crate::metrics::Metrics>>) -> Result<Self> {
         let manager = Self {
             config: Arc::new(config),
             docker_clients: DashMap::new(),
             ssh_pools: DashMap::new(),
             health: DashMap::new(),
+            metrics,
         };
 
         for (name, host) in &manager.config.docker.hosts {
@@ -639,19 +629,19 @@ impl ConnectionManager {
             .ok_or_else(|| anyhow!("Docker host '{}' not configured", name))
     }
 
-    pub async fn ssh_checkout(&self, host: &str) -> Result<PooledSession> {
+    pub async fn ssh_acquire_channel(&self, host: &str) -> Result<AcquiredChannel> {
         let pool = self
             .ssh_pools
             .get(host)
             .map(|entry| entry.clone())
             .ok_or_else(|| anyhow!(self.disconnected_error_message(&format!("ssh:{}", host), host)))?;
 
-        pool.checkout().await
+        pool.acquire_channel().await
     }
 
-    pub async fn ssh_return(&self, host: &str, session: PooledSession, broken: bool) {
+    pub async fn ssh_release_channel(&self, host: &str, channel: AcquiredChannel, broken: bool) {
         if let Some(pool) = self.ssh_pools.get(host) {
-            pool.return_session(session, broken).await;
+            pool.release_channel(channel, broken).await;
         }
     }
 
@@ -775,6 +765,10 @@ impl ConnectionManager {
                             );
                         }
                     }
+                    if let Some(ref metrics) = manager.metrics {
+                        let value = if manager.health.get(&health_key).map(|h| h.status == ConnectionStatus::Connected).unwrap_or(false) { 1 } else { 0 };
+                        metrics.docker_health.with_label_values(&[&name]).set(value);
+                    }
                 }
 
                 let ssh_pools: Vec<(String, SshPool)> = manager
@@ -804,6 +798,18 @@ impl ConnectionManager {
                                 error
                             );
                         }
+                    }
+                    if let Some(ref metrics) = manager.metrics {
+                        let value = if manager.health.get(&health_key).map(|h| h.status == ConnectionStatus::Connected).unwrap_or(false) { 1 } else { 0 };
+                        metrics.ssh_health.with_label_values(&[&name]).set(value);
+
+                        // Update SSH pool gauges using M10's async accessors
+                        let total = pool.session_count().await as i64;
+                        let active = pool.active_channel_count().await as i64;
+                        let idle = total.saturating_sub(active);
+                        metrics.ssh_pool_total.with_label_values(&[&name]).set(total);
+                        metrics.ssh_pool_active.with_label_values(&[&name]).set(active);
+                        metrics.ssh_pool_idle.with_label_values(&[&name]).set(idle);
                     }
                 }
             }
@@ -847,10 +853,12 @@ mod tests {
                 rate_limits: Default::default(),
                 tools: Default::default(),
                 confirm: None,
+                metrics: Default::default(),
             }),
             docker_clients: DashMap::new(),
             ssh_pools: DashMap::new(),
             health: DashMap::new(),
+            metrics: None,
         };
 
         manager.health.insert(

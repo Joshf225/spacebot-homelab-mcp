@@ -33,6 +33,7 @@ private_key_path = "~/.ssh/homelab-proxmox"
 # SSH connection pool configuration
 [ssh.pool]
 max_sessions_per_host = 3
+max_channels_per_session = 10   # Max multiplexed channels per SSH session
 max_lifetime_secs = 1800        # 30 minutes
 max_idle_time_secs = 300        # 5 minutes
 connect_timeout_secs = 10
@@ -84,10 +85,18 @@ file = "/var/log/spacebot-homelab/audit.log"
 # tag = "spacebot-homelab"
 
 # Rate limiting (optional)
+# Mode: "global" (default) — all callers share one rate limit window
+#        "per_caller" — each caller gets their own rate limit window
+# [rate_limits]
+# mode = "per_caller"
+
 [rate_limits.limits]
 "docker.container.*" = { per_minute = 5 }
 "ssh.exec" = { per_minute = 10 }
 "docker.container.delete" = { per_minute = 1 }
+"docker.image.*" = { per_minute = 5 }
+"docker.image.delete" = { per_minute = 1 }
+"docker.image.prune" = { per_minute = 1 }
 
 # Tools configuration (optional)
 # If the [tools] section is omitted entirely, all tools are enabled.
@@ -100,6 +109,13 @@ file = "/var/log/spacebot-homelab/audit.log"
 #     "docker.container.stop",
 #     "docker.container.logs",
 #     "docker.container.inspect",
+#     "docker.container.delete",   # Destructive — requires confirmation
+#     "docker.container.create",
+#     "docker.image.list",
+#     "docker.image.pull",
+#     "docker.image.inspect",
+#     "docker.image.delete",      # Destructive — requires confirmation
+#     "docker.image.prune",       # Destructive — requires confirmation
 #     "ssh.exec",
 #     "ssh.upload",
 #     "ssh.download",
@@ -115,6 +131,18 @@ file = "/var/log/spacebot-homelab/audit.log"
 # [confirm.stop_containers]
 # tool = "docker.container.stop"
 # message = "This will stop a running container. Please confirm."
+#
+# [confirm.delete_containers]
+# tool = "docker.container.delete"
+# message = "This will permanently delete a container. Please confirm."
+#
+# [confirm.delete_images]
+# tool = "docker.image.delete"
+# message = "This will permanently delete an image. Please confirm."
+#
+# [confirm.prune_images]
+# tool = "docker.image.prune"
+# message = "This will prune unused images. Please confirm."
 
 # Docker host with TLS (optional)
 # [docker.hosts.secure-remote]
@@ -122,6 +150,11 @@ file = "/var/log/spacebot-homelab/audit.log"
 # cert_path = "~/.docker/cert.pem"
 # key_path = "~/.docker/key.pem"
 # ca_path = "~/.docker/ca.pem"
+
+# Metrics (optional, requires "metrics" feature)
+# [metrics]
+# enabled = true
+# listen = "127.0.0.1:9090"  # Prometheus scrape endpoint
 
 # SSH passphrase from environment variable (optional)
 # Supports $VAR_NAME and ${VAR_NAME} syntax

@@ -23,6 +23,34 @@ spacebot-homelab-mcp
 
 ## Installation
 
+### Install script (recommended)
+
+Download and install the pre-built binary:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Joshf225/spacebot-homelab-mcp/master/install.sh | bash
+```
+
+You can set a specific version and install directory:
+
+```bash
+VERSION=0.1.0 INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/Joshf225/spacebot-homelab-mcp/master/install.sh | bash
+```
+
+### GitHub Releases
+
+Download pre-built binaries for your platform from [GitHub Releases](https://github.com/Joshf225/spacebot-homelab-mcp/releases).
+
+Available targets:
+- `x86_64-unknown-linux-gnu` (Linux x64)
+- `aarch64-unknown-linux-gnu` (Linux ARM64)
+- `x86_64-apple-darwin` (macOS Intel)
+- `aarch64-apple-darwin` (macOS Apple Silicon)
+
+### Build from source
+
+Requires [Rust](https://rustup.rs/) 1.85+:
+
 ```bash
 cargo build --release
 # Binary: target/release/spacebot-homelab-mcp
@@ -74,16 +102,14 @@ spacebot-homelab-mcp doctor --config ~/.spacebot-homelab/config.toml
 
 ### Configure Spacebot
 
-Add to `~/.spacebot/config.toml`:
+Add to your Spacebot `config.toml`:
 
 ```toml
-[[agents]]
-id = "homelab"
-
-[[agents.mcp]]
+[[mcp_servers]]
 name = "homelab"
+transport = "stdio"
 command = "spacebot-homelab-mcp"
-args = ["--config", "~/.spacebot-homelab/config.toml"]
+args = ["server", "--config", "~/.spacebot-homelab/config.toml"]
 ```
 
 ## Available Tools
@@ -160,4 +186,4 @@ This is a scaffolded project. See `../spacebot/homelab-integration/poc-specifica
 
 ## License
 
-Same as Spacebot (TBD)
+MIT
