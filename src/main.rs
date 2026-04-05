@@ -15,6 +15,7 @@ mod mcp;
 mod metrics;
 mod notifications;
 mod rate_limit;
+mod setup;
 mod tools;
 
 use audit::AuditLogger;
@@ -39,6 +40,9 @@ enum Cli {
         #[arg(long, short)]
         config: Option<PathBuf>,
     },
+
+    /// Interactive config setup wizard
+    Setup,
 }
 
 #[tokio::main]
@@ -54,6 +58,7 @@ async fn main() -> Result<()> {
     match Cli::parse() {
         Cli::Server { config } => run_server(config).await?,
         Cli::Doctor { config } => run_doctor(config).await?,
+        Cli::Setup => setup::run_setup()?,
     }
 
     Ok(())

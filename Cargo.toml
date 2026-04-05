@@ -52,6 +52,8 @@ axum = { version = "0.7", default-features = false, features = ["http1", "tokio"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+dialoguer = { version = "0.11", features = ["history"] }
+console = "0.15"
 
 # Error handling
 anyhow = "1"
