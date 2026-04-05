@@ -267,13 +267,15 @@ pub async fn download(
     audit: Arc<AuditLogger>,
 ) -> Result<String> {
     let local_dest = local_path.unwrap_or_else(|| {
-        format!(
-            "/tmp/homelab-download-{}",
+        let temp = std::env::temp_dir();
+        let filename = format!(
+            "homelab-download-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs()
-        )
+        );
+        temp.join(filename).to_string_lossy().into_owned()
     });
 
     let acquired = manager.ssh_acquire_channel(&host).await?;

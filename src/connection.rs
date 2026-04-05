@@ -30,6 +30,8 @@ pub struct DockerClient {
 pub enum DockerTransport {
     UnixSocket { path: PathBuf },
     Tcp { host: String, tls: bool },
+    #[allow(dead_code)] // Only constructed on Windows via npipe:// connections
+    NamedPipe { path: String },
 }
 
 impl DockerClient {
@@ -113,9 +115,40 @@ impl DockerClient {
                     },
                 )
             }
+        } else if host.host.starts_with("npipe://") {
+            #[cfg(windows)]
+            {
+                let pipe_path = &host.host;
+                let client = bollard::Docker::connect_with_named_pipe(
+                    pipe_path,
+                    120,
+                    bollard::API_DEFAULT_VERSION,
+                )
+                .map_err(|error| {
+                    anyhow!(
+                        "Failed to connect to Docker named pipe {}: {}",
+                        pipe_path,
+                        error
+                    )
+                })?;
+
+                (
+                    client,
+                    DockerTransport::NamedPipe {
+                        path: pipe_path.to_string(),
+                    },
+                )
+            }
+            #[cfg(not(windows))]
+            {
+                return Err(anyhow!(
+                    "Named pipe connections (npipe://) are only supported on Windows. Got: '{}'",
+                    host.host
+                ));
+            }
         } else {
             return Err(anyhow!(
-                "Invalid Docker connection string '{}'. Expected unix:// or tcp://",
+                "Invalid Docker connection string '{}'. Expected unix://, tcp://, or npipe://",
                 host.host
             ));
         };
@@ -148,6 +181,7 @@ impl DockerClient {
                     format!("tcp {}", host)
                 }
             }
+            DockerTransport::NamedPipe { path } => format!("named pipe {}", path),
         }
     }
 }
@@ -210,19 +244,28 @@ impl russh::client::Handler for SshClientHandler {
             }
             Ok(false) => {
                 // Key not found in known_hosts — reject to prevent MITM.
-                // The operator must add the host key first:
-                //   ssh-keyscan -H <host> >> ~/.ssh/known_hosts
+                // The operator must add the host key first.
+                #[cfg(windows)]
+                let hint = format!(
+                    "ssh-keyscan -H {} >> %USERPROFILE%\\.ssh\\known_hosts",
+                    self.host
+                );
+                #[cfg(not(windows))]
+                let hint = format!(
+                    "ssh-keyscan -H {} >> ~/.ssh/known_hosts",
+                    self.host
+                );
                 warn!(
                     "SSH host key for {}:{} not found in known_hosts. \
-                     Add it with: ssh-keyscan -H {} >> ~/.ssh/known_hosts",
-                    self.host, self.port, self.host
+                     Add it with: {}",
+                    self.host, self.port, hint
                 );
                 Err(anyhow!(
                     "SSH host key for {}:{} not found in known_hosts. \
-                     Run: ssh-keyscan -H {} >> ~/.ssh/known_hosts",
+                     Run: {}",
                     self.host,
                     self.port,
-                    self.host
+                    hint
                 ))
             }
             Err(russh::keys::Error::KeyChanged { line }) => {

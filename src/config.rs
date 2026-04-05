@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -262,18 +262,15 @@ impl Config {
         let config_path = if let Some(path) = path {
             path
         } else {
-            let home =
-                std::env::var("HOME").map_err(|_| anyhow!("HOME environment variable not set"))?;
-            PathBuf::from(home)
-                .join(".spacebot-homelab")
-                .join("config.toml")
+            let home = home_dir()?;
+            home.join(".spacebot-homelab").join("config.toml")
         };
 
         info!("Loading configuration from {:?}", config_path);
 
         if !config_path.exists() {
             return Err(anyhow!(
-                "Configuration file not found at {:?}. Create ~/.spacebot-homelab/config.toml or provide --config <path>",
+                "Configuration file not found at {:?}. Create it or provide --config <path>.",
                 config_path
             ));
         }
@@ -365,6 +362,20 @@ impl Config {
     }
 }
 
+/// Cross-platform home directory resolution.
+/// Checks HOME (Unix / Git Bash on Windows), then USERPROFILE (native Windows).
+fn home_dir() -> Result<PathBuf> {
+    if let Ok(home) = std::env::var("HOME") {
+        return Ok(PathBuf::from(home));
+    }
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        return Ok(PathBuf::from(profile));
+    }
+    Err(anyhow!(
+        "Could not determine home directory. Set HOME or USERPROFILE."
+    ))
+}
+
 fn ensure_exists(path: &Path, description: &str) -> Result<()> {
     if !path.exists() {
         return Err(anyhow!("{} not found at {:?}", description, path));
@@ -375,14 +386,12 @@ fn ensure_exists(path: &Path, description: &str) -> Result<()> {
 fn expand_home(path: &Path) -> PathBuf {
     let path_str = path.to_string_lossy();
     if path_str == "~" {
-        return std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| path.to_path_buf());
+        return home_dir().unwrap_or_else(|_| path.to_path_buf());
     }
 
     if let Some(rest) = path_str.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join(rest);
+        if let Ok(home) = home_dir() {
+            return home.join(rest);
         }
     }
 
@@ -460,8 +469,12 @@ fn check_config_permissions(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-fn check_config_permissions(_path: &Path) -> Result<()> {
-    // Permission checks only supported on Unix
+fn check_config_permissions(path: &Path) -> Result<()> {
+    tracing::info!(
+        "Config permission checks are not enforced on this platform. \
+         Ensure {:?} is only readable by your user account.",
+        path
+    );
     Ok(())
 }
 
