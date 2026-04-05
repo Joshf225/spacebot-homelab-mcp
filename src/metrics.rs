@@ -41,8 +41,8 @@ pub struct Metrics {
 
 impl Metrics {
     pub fn new() -> Self {
-        let registry = Registry::new_custom(Some("homelab".to_string()), None)
-            .expect("metrics registry");
+        let registry =
+            Registry::new_custom(Some("homelab".to_string()), None).expect("metrics registry");
 
         let tool_calls_total = IntCounterVec::new(
             Opts::new("tool_calls_total", "Total MCP tool invocations"),
@@ -58,7 +58,10 @@ impl Metrics {
         .expect("tool_duration_seconds metric");
 
         let ssh_pool_active = IntGaugeVec::new(
-            Opts::new("ssh_pool_active_sessions", "Active (checked out) SSH sessions"),
+            Opts::new(
+                "ssh_pool_active_sessions",
+                "Active (checked out) SSH sessions",
+            ),
             &["host"],
         )
         .expect("ssh_pool_active metric");
@@ -70,25 +73,37 @@ impl Metrics {
         .expect("ssh_pool_idle metric");
 
         let ssh_pool_total = IntGaugeVec::new(
-            Opts::new("ssh_pool_total_sessions", "Total SSH sessions (active + idle)"),
+            Opts::new(
+                "ssh_pool_total_sessions",
+                "Total SSH sessions (active + idle)",
+            ),
             &["host"],
         )
         .expect("ssh_pool_total metric");
 
         let docker_health = IntGaugeVec::new(
-            Opts::new("docker_connection_healthy", "Docker connection health (1=up, 0=down)"),
+            Opts::new(
+                "docker_connection_healthy",
+                "Docker connection health (1=up, 0=down)",
+            ),
             &["host"],
         )
         .expect("docker_health metric");
 
         let ssh_health = IntGaugeVec::new(
-            Opts::new("ssh_connection_healthy", "SSH connection health (1=up, 0=down)"),
+            Opts::new(
+                "ssh_connection_healthy",
+                "SSH connection health (1=up, 0=down)",
+            ),
             &["host"],
         )
         .expect("ssh_health metric");
 
         let confirmation_tokens_issued = IntCounterVec::new(
-            Opts::new("confirmation_tokens_issued_total", "Confirmation tokens issued"),
+            Opts::new(
+                "confirmation_tokens_issued_total",
+                "Confirmation tokens issued",
+            ),
             &["tool"],
         )
         .expect("confirmation_tokens_issued metric");
@@ -143,27 +158,27 @@ impl Metrics {
 
 /// Start the optional metrics HTTP server.
 #[cfg(feature = "metrics")]
-pub fn spawn_metrics_server(
-    listen: &str,
-    metrics: Arc<Metrics>,
-) -> tokio::task::JoinHandle<()> {
-    use axum::{Router, routing::get, extract::State};
+pub fn spawn_metrics_server(listen: &str, metrics: Arc<Metrics>) -> tokio::task::JoinHandle<()> {
+    use axum::{Router, extract::State, routing::get};
 
     let app = Router::new()
-        .route("/metrics", get(|State(metrics): State<Arc<Metrics>>| async move {
-            metrics.encode()
-        }))
+        .route(
+            "/metrics",
+            get(|State(metrics): State<Arc<Metrics>>| async move { metrics.encode() }),
+        )
         .with_state(metrics);
 
-    let listener_addr: std::net::SocketAddr = listen
-        .parse()
-        .expect("invalid metrics listen address");
+    let listener_addr: std::net::SocketAddr =
+        listen.parse().expect("invalid metrics listen address");
 
     tokio::spawn(async move {
         let listener = tokio::net::TcpListener::bind(listener_addr)
             .await
             .expect("bind metrics server");
-        tracing::info!("Metrics server listening on http://{}/metrics", listener_addr);
+        tracing::info!(
+            "Metrics server listening on http://{}/metrics",
+            listener_addr
+        );
         axum::serve(listener, app).await.ok();
     })
 }

@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
+use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -181,7 +181,12 @@ pub struct HomelabMcpServer {
 }
 
 impl HomelabMcpServer {
-    pub fn new(config: Arc<Config>, manager: Arc<ConnectionManager>, audit: Arc<AuditLogger>, metrics: Option<Arc<Metrics>>) -> Self {
+    pub fn new(
+        config: Arc<Config>,
+        manager: Arc<ConnectionManager>,
+        audit: Arc<AuditLogger>,
+        metrics: Option<Arc<Metrics>>,
+    ) -> Self {
         let rate_limiter = Arc::new(RateLimiter::from_config(
             &config.rate_limits.limits,
             config.rate_limits.mode.clone(),
@@ -204,22 +209,22 @@ impl HomelabMcpServer {
     /// The canonical list of every tool registered with the MCP server.
     /// Must stay in sync with the `#[tool_router]` impl below.
     const ALL_TOOLS: &'static [(&'static str, &'static str)] = &[
-        ("docker.container.list",    "Docker"),
-        ("docker.container.start",   "Docker"),
-        ("docker.container.stop",    "Docker"),
-        ("docker.container.logs",    "Docker"),
+        ("docker.container.list", "Docker"),
+        ("docker.container.start", "Docker"),
+        ("docker.container.stop", "Docker"),
+        ("docker.container.logs", "Docker"),
         ("docker.container.inspect", "Docker"),
-        ("docker.container.delete",  "Docker"),
-        ("docker.container.create",  "Docker"),
-        ("docker.image.list",        "Docker"),
-        ("docker.image.pull",        "Docker"),
-        ("docker.image.inspect",     "Docker"),
-        ("docker.image.delete",      "Docker"),
-        ("docker.image.prune",       "Docker"),
-        ("ssh.exec",                 "SSH"),
-        ("ssh.upload",               "SSH"),
-        ("ssh.download",             "SSH"),
-        ("confirm_operation",        "Confirm"),
+        ("docker.container.delete", "Docker"),
+        ("docker.container.create", "Docker"),
+        ("docker.image.list", "Docker"),
+        ("docker.image.pull", "Docker"),
+        ("docker.image.inspect", "Docker"),
+        ("docker.image.delete", "Docker"),
+        ("docker.image.prune", "Docker"),
+        ("ssh.exec", "SSH"),
+        ("ssh.upload", "SSH"),
+        ("ssh.download", "SSH"),
+        ("confirm_operation", "Confirm"),
     ];
 
     /// Whether a tool is available to callers.
@@ -242,8 +247,7 @@ impl HomelabMcpServer {
 
     /// Human-readable tool breakdown, e.g. `"Docker (5) | SSH (3) | Confirm (1)"`.
     pub fn tool_summary(&self) -> String {
-        let mut counts: std::collections::BTreeMap<&str, usize> =
-            std::collections::BTreeMap::new();
+        let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
         for (name, category) in Self::ALL_TOOLS {
             if self.is_tool_available(name) {
                 *counts.entry(category).or_insert(0) += 1;
@@ -313,7 +317,10 @@ impl HomelabMcpServer {
         result
     }
 
-    #[tool(name = "docker.container.start", description = "Start a Docker container")]
+    #[tool(
+        name = "docker.container.start",
+        description = "Start a Docker container"
+    )]
     async fn docker_container_start(
         &self,
         Parameters(args): Parameters<DockerContainerActionArgs>,
@@ -333,7 +340,10 @@ impl HomelabMcpServer {
         result
     }
 
-    #[tool(name = "docker.container.stop", description = "Stop a Docker container")]
+    #[tool(
+        name = "docker.container.stop",
+        description = "Stop a Docker container"
+    )]
     async fn docker_container_stop(
         &self,
         Parameters(args): Parameters<DockerContainerStopArgs>,
@@ -354,7 +364,10 @@ impl HomelabMcpServer {
         result
     }
 
-    #[tool(name = "docker.container.logs", description = "Get Docker container logs")]
+    #[tool(
+        name = "docker.container.logs",
+        description = "Get Docker container logs"
+    )]
     async fn docker_container_logs(
         &self,
         Parameters(args): Parameters<DockerContainerLogsArgs>,
@@ -375,7 +388,10 @@ impl HomelabMcpServer {
         result
     }
 
-    #[tool(name = "docker.container.inspect", description = "Inspect a Docker container")]
+    #[tool(
+        name = "docker.container.inspect",
+        description = "Inspect a Docker container"
+    )]
     async fn docker_container_inspect(
         &self,
         Parameters(args): Parameters<DockerContainerActionArgs>,
@@ -471,7 +487,10 @@ impl HomelabMcpServer {
         result
     }
 
-    #[tool(name = "docker.image.pull", description = "Pull a Docker image from a registry")]
+    #[tool(
+        name = "docker.image.pull",
+        description = "Pull a Docker image from a registry"
+    )]
     async fn docker_image_pull(
         &self,
         Parameters(args): Parameters<DockerImagePullArgs>,
@@ -491,7 +510,10 @@ impl HomelabMcpServer {
         result
     }
 
-    #[tool(name = "docker.image.inspect", description = "Inspect a Docker image's metadata")]
+    #[tool(
+        name = "docker.image.inspect",
+        description = "Inspect a Docker image's metadata"
+    )]
     async fn docker_image_inspect(
         &self,
         Parameters(args): Parameters<DockerImageInspectArgs>,
@@ -562,11 +584,11 @@ impl HomelabMcpServer {
         result
     }
 
-    #[tool(name = "ssh.exec", description = "Execute a command on a remote host via SSH")]
-    async fn ssh_exec(
-        &self,
-        Parameters(args): Parameters<SshExecArgs>,
-    ) -> Result<String, String> {
+    #[tool(
+        name = "ssh.exec",
+        description = "Execute a command on a remote host via SSH"
+    )]
+    async fn ssh_exec(&self, Parameters(args): Parameters<SshExecArgs>) -> Result<String, String> {
         self.ensure_tool_available("ssh.exec")?;
         let start = Instant::now();
         let result = ssh::exec(
@@ -584,7 +606,10 @@ impl HomelabMcpServer {
         result
     }
 
-    #[tool(name = "ssh.upload", description = "Upload a file to a remote host via SFTP")]
+    #[tool(
+        name = "ssh.upload",
+        description = "Upload a file to a remote host via SFTP"
+    )]
     async fn ssh_upload(
         &self,
         Parameters(args): Parameters<SshFileTransferArgs>,
@@ -604,7 +629,10 @@ impl HomelabMcpServer {
         result
     }
 
-    #[tool(name = "ssh.download", description = "Download a file from a remote host via SFTP")]
+    #[tool(
+        name = "ssh.download",
+        description = "Download a file from a remote host via SFTP"
+    )]
     async fn ssh_download(
         &self,
         Parameters(args): Parameters<SshDownloadArgs>,
@@ -624,7 +652,10 @@ impl HomelabMcpServer {
         result
     }
 
-    #[tool(name = "confirm_operation", description = "Confirm a previously requested destructive operation")]
+    #[tool(
+        name = "confirm_operation",
+        description = "Confirm a previously requested destructive operation"
+    )]
     async fn confirm_operation(
         &self,
         Parameters(args): Parameters<ConfirmOperationArgs>,
@@ -667,9 +698,8 @@ impl HomelabMcpServer {
                 .map_err(|error| error.to_string())
             }
             "docker.container.start" => {
-                let params: DockerContainerActionArgs =
-                    serde_json::from_str(&original_params_json)
-                        .map_err(|error| error.to_string())?;
+                let params: DockerContainerActionArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
                 self.audit
                     .log(
                         "docker.container.start",
@@ -690,9 +720,8 @@ impl HomelabMcpServer {
                 .map_err(|error| error.to_string())
             }
             "docker.container.stop" => {
-                let params: DockerContainerStopArgs =
-                    serde_json::from_str(&original_params_json)
-                        .map_err(|error| error.to_string())?;
+                let params: DockerContainerStopArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
                 self.audit
                     .log(
                         "docker.container.stop",
@@ -714,9 +743,8 @@ impl HomelabMcpServer {
                 .map_err(|error| error.to_string())
             }
             "docker.container.delete" => {
-                let params: DockerContainerDeleteArgs =
-                    serde_json::from_str(&original_params_json)
-                        .map_err(|error| error.to_string())?;
+                let params: DockerContainerDeleteArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
                 self.audit
                     .log(
                         "docker.container.delete",
@@ -737,9 +765,8 @@ impl HomelabMcpServer {
                 .map_err(|error| error.to_string())
             }
             "docker.image.delete" => {
-                let params: DockerImageDeleteArgs =
-                    serde_json::from_str(&original_params_json)
-                        .map_err(|error| error.to_string())?;
+                let params: DockerImageDeleteArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
                 self.audit
                     .log(
                         "docker.image.delete",
@@ -760,9 +787,8 @@ impl HomelabMcpServer {
                 .map_err(|error| error.to_string())
             }
             "docker.image.prune" => {
-                let params: DockerImagePruneArgs =
-                    serde_json::from_str(&original_params_json)
-                        .map_err(|error| error.to_string())?;
+                let params: DockerImagePruneArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
                 self.audit
                     .log(
                         "docker.image.prune",

@@ -1,5 +1,9 @@
 use anyhow::{Result, anyhow};
-use bollard::container::{CreateContainerOptions, Config as ContainerConfig, InspectContainerOptions, ListContainersOptions, LogsOptions, RemoveContainerOptions, StartContainerOptions, StopContainerOptions};
+use bollard::container::{
+    Config as ContainerConfig, CreateContainerOptions, InspectContainerOptions,
+    ListContainersOptions, LogsOptions, RemoveContainerOptions, StartContainerOptions,
+    StopContainerOptions,
+};
 use bollard::models::{HostConfig, PortBinding, RestartPolicy, RestartPolicyNameEnum};
 use futures::StreamExt;
 use serde_json::Value;
@@ -128,7 +132,10 @@ pub async fn container_start(
             .await
             .map_err(|error| anyhow!("Failed to start container '{}': {}", container, error))?;
 
-        Ok(format!("Started container '{}' on Docker host '{}'.", container, host))
+        Ok(format!(
+            "Started container '{}' on Docker host '{}'.",
+            container, host
+        ))
     }
     .await;
 
@@ -189,7 +196,10 @@ pub async fn container_stop(
             .await
             .map_err(|error| anyhow!("Failed to stop container '{}': {}", container, error))?;
 
-        Ok(format!("Stopped container '{}' on Docker host '{}'.", container, host))
+        Ok(format!(
+            "Stopped container '{}' on Docker host '{}'.",
+            container, host
+        ))
     }
     .await;
 
@@ -305,7 +315,12 @@ pub async fn container_inspect(
     match result {
         Ok(output) => {
             audit
-                .log("docker.container.inspect", &host, "success", Some(&container))
+                .log(
+                    "docker.container.inspect",
+                    &host,
+                    "success",
+                    Some(&container),
+                )
                 .await
                 .ok();
             Ok(wrap_output_envelope("docker.container.inspect", &output))
@@ -345,7 +360,12 @@ pub async fn container_delete(
             container, host, force
         );
         audit
-            .log("docker.container.delete", &host, "dry_run", Some(&container))
+            .log(
+                "docker.container.delete",
+                &host,
+                "dry_run",
+                Some(&container),
+            )
             .await
             .ok();
         return Ok(wrap_output_envelope("docker.container.delete", &output));
@@ -471,7 +491,12 @@ pub async fn container_delete_confirmed(
     match result {
         Ok(output) => {
             audit
-                .log("docker.container.delete", &host, "success", Some(&container))
+                .log(
+                    "docker.container.delete",
+                    &host,
+                    "success",
+                    Some(&container),
+                )
                 .await
                 .ok();
             Ok(wrap_output_envelope("docker.container.delete", &output))
@@ -491,6 +516,7 @@ pub async fn container_delete_confirmed(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn container_create(
     manager: Arc<ConnectionManager>,
     host: Option<String>,
@@ -506,7 +532,11 @@ pub async fn container_create(
     let host = host.unwrap_or_else(|| "local".to_string());
 
     // Validate name: Docker container names must match [a-zA-Z0-9][a-zA-Z0-9_.-]
-    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-') {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+    {
         return Err(anyhow!(
             "Invalid container name '{}'. Must contain only alphanumeric characters, underscores, dots, or hyphens.",
             name
@@ -572,25 +602,23 @@ pub async fn container_create(
         let binds = volumes.clone();
 
         // Build restart policy
-        let restart = restart_policy.as_deref().map(|policy| {
-            match policy {
-                "always" => RestartPolicy {
-                    name: Some(RestartPolicyNameEnum::ALWAYS),
-                    maximum_retry_count: None,
-                },
-                "unless-stopped" => RestartPolicy {
-                    name: Some(RestartPolicyNameEnum::UNLESS_STOPPED),
-                    maximum_retry_count: None,
-                },
-                "on-failure" => RestartPolicy {
-                    name: Some(RestartPolicyNameEnum::ON_FAILURE),
-                    maximum_retry_count: Some(3),
-                },
-                _ => RestartPolicy {
-                    name: Some(RestartPolicyNameEnum::NO),
-                    maximum_retry_count: None,
-                },
-            }
+        let restart = restart_policy.as_deref().map(|policy| match policy {
+            "always" => RestartPolicy {
+                name: Some(RestartPolicyNameEnum::ALWAYS),
+                maximum_retry_count: None,
+            },
+            "unless-stopped" => RestartPolicy {
+                name: Some(RestartPolicyNameEnum::UNLESS_STOPPED),
+                maximum_retry_count: None,
+            },
+            "on-failure" => RestartPolicy {
+                name: Some(RestartPolicyNameEnum::ON_FAILURE),
+                maximum_retry_count: Some(3),
+            },
+            _ => RestartPolicy {
+                name: Some(RestartPolicyNameEnum::NO),
+                maximum_retry_count: None,
+            },
         });
 
         let host_config = HostConfig {
@@ -626,9 +654,7 @@ pub async fn container_create(
                 container_config,
             )
             .await
-            .map_err(|error| {
-                anyhow!("Failed to create container '{}': {}", name, error)
-            })?;
+            .map_err(|error| anyhow!("Failed to create container '{}': {}", name, error))?;
 
         let mut output = format!(
             "Created container '{}' (ID: {}) from image '{}' on Docker host '{}'.",
@@ -645,7 +671,9 @@ pub async fn container_create(
             }
         }
 
-        output.push_str("\n\nContainer created but NOT started. Use docker.container.start to start it.");
+        output.push_str(
+            "\n\nContainer created but NOT started. Use docker.container.start to start it.",
+        );
 
         Ok(output)
     }
@@ -717,11 +745,27 @@ mod tests {
     #[test]
     fn test_container_name_validation() {
         // Valid names
-        assert!("my-container".chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-'));
-        assert!("webapp.v2".chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-'));
+        assert!(
+            "my-container"
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+        );
+        assert!(
+            "webapp.v2"
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+        );
 
         // Invalid names
-        assert!(!"my container".chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-'));
-        assert!(!"rm -rf /".chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-'));
+        assert!(
+            !"my container"
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+        );
+        assert!(
+            !"rm -rf /"
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+        );
     }
 }

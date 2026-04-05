@@ -111,9 +111,9 @@ impl ConfirmationManager {
 
     pub async fn confirm(&self, token: &str, tool_name: &str) -> Result<String> {
         let mut map = self.pending.lock().await;
-        let pending = map
-            .get_mut(token)
-            .ok_or_else(|| anyhow!("Invalid or expired confirmation token. Tokens expire after 5 minutes."))?;
+        let pending = map.get_mut(token).ok_or_else(|| {
+            anyhow!("Invalid or expired confirmation token. Tokens expire after 5 minutes.")
+        })?;
 
         if pending.created_at.elapsed() >= self.token_ttl {
             map.remove(token);
@@ -256,7 +256,12 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
         let token = parsed["token"].as_str().unwrap();
 
-        assert!(manager.confirm(token, "docker.container.delete").await.is_err());
+        assert!(
+            manager
+                .confirm(token, "docker.container.delete")
+                .await
+                .is_err()
+        );
     }
 
     #[test]
@@ -265,7 +270,10 @@ mod tests {
         let result = rule.validate("ssh.exec");
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("ssh.exec"), "error should mention the rule name");
+        assert!(
+            msg.contains("ssh.exec"),
+            "error should mention the rule name"
+        );
         assert!(msg.contains("aways"), "error should mention the bad value");
     }
 
@@ -290,8 +298,7 @@ mod tests {
             "ssh.exec".to_string(),
             ConfirmRule::Always("always".to_string()),
         );
-        let manager =
-            ConfirmationManager::new(rules).with_ttl(Duration::from_millis(1));
+        let manager = ConfirmationManager::new(rules).with_ttl(Duration::from_millis(1));
 
         let response = manager
             .check_and_maybe_require(

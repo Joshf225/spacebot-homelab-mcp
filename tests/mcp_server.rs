@@ -69,7 +69,10 @@ async fn test_mcp_server_starts_and_lists_tools() {
 
     let initialize_response = read_json_line(&mut lines).await;
     assert_eq!(initialize_response["id"], json!(1));
-    assert_eq!(initialize_response["result"]["serverInfo"]["name"], json!("spacebot-homelab-mcp"));
+    assert_eq!(
+        initialize_response["result"]["serverInfo"]["name"],
+        json!("spacebot-homelab-mcp")
+    );
     assert!(initialize_response["result"]["capabilities"]["tools"].is_object());
 
     let initialized_notification = json!({
@@ -213,8 +216,15 @@ async fn test_doctor_runs() {
         .await
         .expect("run doctor command");
 
-    assert!(output.status.success(), "doctor failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "doctor failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Ready to start."), "unexpected doctor output: {stdout}");
+    assert!(
+        stdout.contains("Ready to start."),
+        "unexpected doctor output: {stdout}"
+    );
 }

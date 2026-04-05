@@ -45,7 +45,10 @@ pub async fn exec(
             "DRY RUN: Command '{}' passes prefix validation for host '{}'. Set dry_run=false to execute.",
             command, host
         );
-        audit.log("ssh.exec", &host, "dry_run", Some(&command)).await.ok();
+        audit
+            .log("ssh.exec", &host, "dry_run", Some(&command))
+            .await
+            .ok();
         return Ok(wrap_output_envelope("ssh.exec", &output));
     }
 
@@ -123,10 +126,12 @@ pub async fn exec_confirmed(
         while let Some(message) = channel.wait().await {
             match message {
                 russh::ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
-                russh::ChannelMsg::ExtendedData { data, ext } if ext == 1 => {
+                russh::ChannelMsg::ExtendedData { data, ext: 1 } => {
                     stderr.extend_from_slice(&data);
                 }
-                russh::ChannelMsg::ExitStatus { exit_status: status } => {
+                russh::ChannelMsg::ExitStatus {
+                    exit_status: status,
+                } => {
                     exit_status = Some(status);
                 }
                 _ => {}
@@ -140,7 +145,10 @@ pub async fn exec_confirmed(
     let result = match execution {
         Ok(Ok((stdout, stderr, exit_status))) => {
             let output = render_exec_output(&stdout, &stderr, exit_status);
-            audit.log("ssh.exec", &host, "success", Some(&command)).await.ok();
+            audit
+                .log("ssh.exec", &host, "success", Some(&command))
+                .await
+                .ok();
             Ok(wrap_output_envelope(
                 "ssh.exec",
                 &truncate_output(&output, OUTPUT_MAX_CHARS),
@@ -220,7 +228,10 @@ pub async fn upload(
 
         Ok(format!(
             "Uploaded {} bytes from '{}' to '{}:{}'.",
-            data.len(), local_path, host, remote_path
+            data.len(),
+            local_path,
+            host,
+            remote_path
         ))
     }
     .await;
@@ -232,7 +243,10 @@ pub async fn upload(
 
     match result {
         Ok(output) => {
-            audit.log("ssh.upload", &host, "success", Some(&remote_path)).await.ok();
+            audit
+                .log("ssh.upload", &host, "success", Some(&remote_path))
+                .await
+                .ok();
             Ok(wrap_output_envelope("ssh.upload", &output))
         }
         Err(error) => {
@@ -303,7 +317,10 @@ pub async fn download(
 
         Ok(format!(
             "Downloaded {} bytes from '{}:{}' to '{}'.",
-            data.len(), host, remote_path, local_dest
+            data.len(),
+            host,
+            remote_path,
+            local_dest
         ))
     }
     .await;
@@ -344,9 +361,10 @@ pub fn validate_command(command: &str, allowlist: &CommandAllowlist) -> Result<(
 }
 
 fn validate_allowed_prefix(command: &str, allowlist: &CommandAllowlist) -> Result<()> {
-    let allowed = allowlist.allowed_prefixes.iter().any(|prefix| {
-        command == prefix || command.starts_with(&format!("{} ", prefix))
-    });
+    let allowed = allowlist
+        .allowed_prefixes
+        .iter()
+        .any(|prefix| command == prefix || command.starts_with(&format!("{} ", prefix)));
 
     if !allowed {
         return Err(anyhow!(

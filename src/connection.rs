@@ -36,12 +36,15 @@ impl DockerClient {
     pub fn new(host: &DockerHost) -> Result<Self> {
         let (client, transport) = if host.host.starts_with("unix://") {
             let socket_path = host.host.trim_start_matches("unix://");
-            let client = bollard::Docker::connect_with_unix(
-                socket_path,
-                120,
-                bollard::API_DEFAULT_VERSION,
-            )
-            .map_err(|error| anyhow!("Failed to connect to Docker socket {}: {}", socket_path, error))?;
+            let client =
+                bollard::Docker::connect_with_unix(socket_path, 120, bollard::API_DEFAULT_VERSION)
+                    .map_err(|error| {
+                        anyhow!(
+                            "Failed to connect to Docker socket {}: {}",
+                            socket_path,
+                            error
+                        )
+                    })?;
 
             (
                 client,
@@ -50,9 +53,8 @@ impl DockerClient {
                 },
             )
         } else if host.host.starts_with("tcp://") {
-            let has_tls = host.key_path.is_some()
-                && host.cert_path.is_some()
-                && host.ca_path.is_some();
+            let has_tls =
+                host.key_path.is_some() && host.cert_path.is_some() && host.ca_path.is_some();
 
             if has_tls {
                 let ssl_key = host.key_path.as_ref().unwrap();
@@ -218,7 +220,9 @@ impl russh::client::Handler for SshClientHandler {
                 Err(anyhow!(
                     "SSH host key for {}:{} not found in known_hosts. \
                      Run: ssh-keyscan -H {} >> ~/.ssh/known_hosts",
-                    self.host, self.port, self.host
+                    self.host,
+                    self.port,
+                    self.host
                 ))
             }
             Err(russh::keys::Error::KeyChanged { line }) => {
@@ -231,7 +235,9 @@ impl russh::client::Handler for SshClientHandler {
                 Err(anyhow!(
                     "SSH HOST KEY CHANGED for {}:{} (known_hosts line {}). \
                      Possible MITM attack. Remove the old key and re-verify manually.",
-                    self.host, self.port, line
+                    self.host,
+                    self.port,
+                    line
                 ))
             }
             Err(error) => {
@@ -242,7 +248,9 @@ impl russh::client::Handler for SshClientHandler {
                 );
                 Err(anyhow!(
                     "SSH host key verification failed for {}:{}: {}",
-                    self.host, self.port, error
+                    self.host,
+                    self.port,
+                    error
                 ))
             }
         }
@@ -370,7 +378,9 @@ impl SshPool {
     async fn create_shared_session(&self) -> Result<SharedSession> {
         let config = russh::client::Config {
             inactivity_timeout: Some(Duration::from_secs(self.pool_config.connect_timeout_secs)),
-            keepalive_interval: Some(Duration::from_secs(self.pool_config.keepalive_interval_secs)),
+            keepalive_interval: Some(Duration::from_secs(
+                self.pool_config.keepalive_interval_secs,
+            )),
             keepalive_max: 3,
             ..Default::default()
         };
@@ -459,8 +469,7 @@ impl SshPool {
             if session.active_channels > 0 {
                 return true;
             }
-            session.created_at.elapsed() <= max_lifetime
-                && session.last_used.elapsed() <= max_idle
+            session.created_at.elapsed() <= max_lifetime && session.last_used.elapsed() <= max_idle
         });
 
         let removed = before.saturating_sub(sessions.len());
@@ -485,7 +494,11 @@ impl SshPool {
         let session = self.create_shared_session().await?;
         session
             .handle
-            .disconnect(russh::Disconnect::ByApplication, "health check complete", "en")
+            .disconnect(
+                russh::Disconnect::ByApplication,
+                "health check complete",
+                "en",
+            )
             .await
             .ok();
         Ok(())
@@ -506,7 +519,12 @@ impl SshPool {
 
     /// Get the total number of active channels across all sessions.
     pub async fn active_channel_count(&self) -> usize {
-        self.sessions.lock().await.iter().map(|s| s.active_channels).sum()
+        self.sessions
+            .lock()
+            .await
+            .iter()
+            .map(|s| s.active_channels)
+            .sum()
     }
 }
 
@@ -529,7 +547,10 @@ pub enum ConnectionStatus {
 }
 
 impl ConnectionManager {
-    pub async fn new(config: Config, metrics: Option<Arc<crate::metrics::Metrics>>) -> Result<Self> {
+    pub async fn new(
+        config: Config,
+        metrics: Option<Arc<crate::metrics::Metrics>>,
+    ) -> Result<Self> {
         let manager = Self {
             config: Arc::new(config),
             docker_clients: DashMap::new(),
@@ -560,21 +581,27 @@ impl ConnectionManager {
                     match validate_result {
                         Ok(()) => {
                             manager.mark_healthy(&health_key);
-                            info!("Docker '{}' connected via {}", name, client.transport_summary());
+                            info!(
+                                "Docker '{}' connected via {}",
+                                name,
+                                client.transport_summary()
+                            );
                         }
                         Err(error) => {
                             manager.mark_unhealthy(&health_key, error.to_string());
                             warn!(
                                 "Docker '{}' ping failed during startup (will retry): {}",
-                                name,
-                                error
+                                name, error
                             );
                         }
                     }
                 }
                 Err(error) => {
                     manager.mark_unhealthy(&health_key, error.to_string());
-                    warn!("Failed to initialize Docker client for '{}': {}", name, error);
+                    warn!(
+                        "Failed to initialize Docker client for '{}': {}",
+                        name, error
+                    );
                 }
             }
         }
@@ -593,9 +620,10 @@ impl ConnectionManager {
                 },
             );
 
-            manager
-                .ssh_pools
-                .insert(name.clone(), SshPool::new(host.clone(), manager.config.ssh.pool.clone()));
+            manager.ssh_pools.insert(
+                name.clone(),
+                SshPool::new(host.clone(), manager.config.ssh.pool.clone()),
+            );
             // SSH pools start in Connecting state — actual connectivity is verified
             // by the first health monitor cycle, not at startup. This avoids blocking
             // startup on SSH handshakes and avoids falsely reporting Connected.
@@ -634,7 +662,9 @@ impl ConnectionManager {
             .ssh_pools
             .get(host)
             .map(|entry| entry.clone())
-            .ok_or_else(|| anyhow!(self.disconnected_error_message(&format!("ssh:{}", host), host)))?;
+            .ok_or_else(|| {
+                anyhow!(self.disconnected_error_message(&format!("ssh:{}", host), host))
+            })?;
 
         pool.acquire_channel().await
     }
@@ -708,10 +738,7 @@ impl ConnectionManager {
                 })
                 .unwrap_or_else(|| "never".to_string());
 
-            let last_error = health
-                .last_error
-                .as_deref()
-                .unwrap_or("unknown");
+            let last_error = health.last_error.as_deref().unwrap_or("unknown");
 
             let status_label = match health.status {
                 ConnectionStatus::Connected => "connected",
@@ -759,14 +786,21 @@ impl ConnectionManager {
                             let failures = manager.mark_unhealthy(&health_key, error.to_string());
                             warn!(
                                 "Docker '{}' unhealthy ({} consecutive failures): {}",
-                                name,
-                                failures,
-                                error
+                                name, failures, error
                             );
                         }
                     }
                     if let Some(ref metrics) = manager.metrics {
-                        let value = if manager.health.get(&health_key).map(|h| h.status == ConnectionStatus::Connected).unwrap_or(false) { 1 } else { 0 };
+                        let value = if manager
+                            .health
+                            .get(&health_key)
+                            .map(|h| h.status == ConnectionStatus::Connected)
+                            .unwrap_or(false)
+                        {
+                            1
+                        } else {
+                            0
+                        };
                         metrics.docker_health.with_label_values(&[&name]).set(value);
                     }
                 }
@@ -793,22 +827,35 @@ impl ConnectionManager {
                             let failures = manager.mark_unhealthy(&health_key, error.to_string());
                             warn!(
                                 "SSH '{}' unhealthy ({} consecutive failures): {}",
-                                name,
-                                failures,
-                                error
+                                name, failures, error
                             );
                         }
                     }
                     if let Some(ref metrics) = manager.metrics {
-                        let value = if manager.health.get(&health_key).map(|h| h.status == ConnectionStatus::Connected).unwrap_or(false) { 1 } else { 0 };
+                        let value = if manager
+                            .health
+                            .get(&health_key)
+                            .map(|h| h.status == ConnectionStatus::Connected)
+                            .unwrap_or(false)
+                        {
+                            1
+                        } else {
+                            0
+                        };
                         metrics.ssh_health.with_label_values(&[&name]).set(value);
 
                         // Update SSH pool gauges using M10's async accessors
                         let total = pool.session_count().await as i64;
                         let active = pool.active_channel_count().await as i64;
                         let idle = total.saturating_sub(active);
-                        metrics.ssh_pool_total.with_label_values(&[&name]).set(total);
-                        metrics.ssh_pool_active.with_label_values(&[&name]).set(active);
+                        metrics
+                            .ssh_pool_total
+                            .with_label_values(&[&name])
+                            .set(total);
+                        metrics
+                            .ssh_pool_active
+                            .with_label_values(&[&name])
+                            .set(active);
                         metrics.ssh_pool_idle.with_label_values(&[&name]).set(idle);
                     }
                 }
@@ -817,7 +864,11 @@ impl ConnectionManager {
     }
 
     pub async fn close_all(&self) {
-        let pools: Vec<SshPool> = self.ssh_pools.iter().map(|entry| entry.value().clone()).collect();
+        let pools: Vec<SshPool> = self
+            .ssh_pools
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
         for pool in pools {
             pool.close_all().await;
         }

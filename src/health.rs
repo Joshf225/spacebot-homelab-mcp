@@ -27,7 +27,10 @@ pub async fn run_diagnostics(config: &Config) -> Result<()> {
                 println!("  ✓ SSH '{}': {}@{} -> OK", name, host.user, host.host);
             }
             Err(error) => {
-                println!("  ✗ SSH '{}': {}@{} -> {}", name, host.user, host.host, error);
+                println!(
+                    "  ✗ SSH '{}': {}@{} -> {}",
+                    name, host.user, host.host, error
+                );
                 println!("    -> Check that SSH server is running");
                 println!("    -> Verify host and port are correct");
                 println!("    -> Verify private_key_path is correct");
@@ -105,7 +108,10 @@ fn check_security_config(config: &Config) {
 
     for (name, host) in &config.ssh.hosts {
         if host.user == "root" {
-            warn!("SSH host '{}' uses root user - this is a security risk", name);
+            warn!(
+                "SSH host '{}' uses root user - this is a security risk",
+                name
+            );
             warnings += 1;
         }
     }

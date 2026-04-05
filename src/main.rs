@@ -120,11 +120,9 @@ async fn run_server(config_path: Option<PathBuf>) -> Result<()> {
 
     // Start metrics HTTP server if configured
     #[cfg(feature = "metrics")]
-    let metrics_handle = if let Some(ref m) = metrics {
-        Some(crate::metrics::spawn_metrics_server(&metrics_listen, m.clone()))
-    } else {
-        None
-    };
+    let metrics_handle = metrics
+        .as_ref()
+        .map(|m| crate::metrics::spawn_metrics_server(&metrics_listen, m.clone()));
 
     tokio::select! {
         result = &mut wait_for_service => {

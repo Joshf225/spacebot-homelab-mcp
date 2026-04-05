@@ -90,7 +90,12 @@ pub async fn image_list(
         }
         Err(error) => {
             audit
-                .log("docker.image.list", &host, "error", Some(&error.to_string()))
+                .log(
+                    "docker.image.list",
+                    &host,
+                    "error",
+                    Some(&error.to_string()),
+                )
                 .await
                 .ok();
             Err(error)
@@ -172,7 +177,12 @@ pub async fn image_pull(
         }
         Err(error) => {
             audit
-                .log("docker.image.pull", &host, "error", Some(&error.to_string()))
+                .log(
+                    "docker.image.pull",
+                    &host,
+                    "error",
+                    Some(&error.to_string()),
+                )
                 .await
                 .ok();
             Err(error)
@@ -272,7 +282,12 @@ pub async fn image_delete(
         .await?
     {
         audit
-            .log("docker.image.delete", &host, "confirmation_required", Some(&image))
+            .log(
+                "docker.image.delete",
+                &host,
+                "confirmation_required",
+                Some(&image),
+            )
             .await
             .ok();
         return Ok(response);
@@ -304,14 +319,8 @@ pub async fn image_delete_confirmed(
             .await
             .map_err(|error| anyhow!("Failed to delete image '{}': {}", image, error))?;
 
-        let deleted_count = results
-            .iter()
-            .filter(|r| r.deleted.is_some())
-            .count();
-        let untagged_count = results
-            .iter()
-            .filter(|r| r.untagged.is_some())
-            .count();
+        let deleted_count = results.iter().filter(|r| r.deleted.is_some()).count();
+        let untagged_count = results.iter().filter(|r| r.untagged.is_some()).count();
 
         Ok(format!(
             "Deleted image '{}' on Docker host '{}'. {} layers deleted, {} tags removed.",
@@ -330,7 +339,12 @@ pub async fn image_delete_confirmed(
         }
         Err(error) => {
             audit
-                .log("docker.image.delete", &host, "error", Some(&error.to_string()))
+                .log(
+                    "docker.image.delete",
+                    &host,
+                    "error",
+                    Some(&error.to_string()),
+                )
                 .await
                 .ok();
             Err(error)
@@ -355,10 +369,7 @@ pub async fn image_prune(
         } else {
             "dangling (untagged) images only"
         };
-        let output = format!(
-            "DRY RUN: Would prune {} on Docker host '{}'.",
-            scope, host
-        );
+        let output = format!("DRY RUN: Would prune {} on Docker host '{}'.", scope, host);
         audit
             .log("docker.image.prune", &host, "dry_run", None)
             .await
@@ -441,7 +452,12 @@ pub async fn image_prune_confirmed(
         }
         Err(error) => {
             audit
-                .log("docker.image.prune", &host, "error", Some(&error.to_string()))
+                .log(
+                    "docker.image.prune",
+                    &host,
+                    "error",
+                    Some(&error.to_string()),
+                )
                 .await
                 .ok();
             Err(error)
