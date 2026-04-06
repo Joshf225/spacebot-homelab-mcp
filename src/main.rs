@@ -53,7 +53,9 @@ async fn main() -> Result<()> {
     {
         if std::env::var("HOME").is_err() {
             if let Ok(profile) = std::env::var("USERPROFILE") {
-                unsafe { std::env::set_var("HOME", &profile); }
+                unsafe {
+                    std::env::set_var("HOME", &profile);
+                }
             }
         }
     }

@@ -8,7 +8,7 @@ set -euo pipefail
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
     echo "Detected Windows environment. Use install.ps1 instead:"
-    echo "  irm https://raw.githubusercontent.com/Joshf225/spacebot-homelab-mcp/main/install.ps1 | iex"
+    echo "  irm https://raw.githubusercontent.com/Joshf225/spacebot-homelab-mcp/master/install.ps1 | iex"
     exit 1
     ;;
 esac

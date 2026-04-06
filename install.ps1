@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 # Install script for spacebot-homelab-mcp on Windows
-# Usage: irm https://raw.githubusercontent.com/Joshf225/spacebot-homelab-mcp/main/install.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/Joshf225/spacebot-homelab-mcp/master/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
@@ -15,13 +15,14 @@ function Get-LatestVersion {
 }
 
 function Get-Platform {
+    if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq "ARM64") {
+        throw "ARM64 Windows builds are not yet available."
+    }
+
     $arch = if ([Environment]::Is64BitOperatingSystem) { "x86_64" } else {
         throw "32-bit Windows is not supported."
     }
-    # ARM64 detection
-    if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
-        throw "ARM64 Windows builds are not yet available."
-    }
+
     return "$arch-pc-windows-msvc"
 }
 

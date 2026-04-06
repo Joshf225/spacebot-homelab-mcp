@@ -28,10 +28,17 @@ pub struct DockerClient {
 
 #[derive(Debug, Clone)]
 pub enum DockerTransport {
-    UnixSocket { path: PathBuf },
-    Tcp { host: String, tls: bool },
+    UnixSocket {
+        path: PathBuf,
+    },
+    Tcp {
+        host: String,
+        tls: bool,
+    },
     #[allow(dead_code)] // Only constructed on Windows via npipe:// connections
-    NamedPipe { path: String },
+    NamedPipe {
+        path: String,
+    },
 }
 
 impl DockerClient {
@@ -220,6 +227,23 @@ pub struct SshClientHandler {
     port: u16,
 }
 
+#[cfg(windows)]
+const KNOWN_HOSTS_HINT_PATH: &str = "%USERPROFILE%\\.ssh\\known_hosts";
+
+#[cfg(not(windows))]
+const KNOWN_HOSTS_HINT_PATH: &str = "~/.ssh/known_hosts";
+
+fn ssh_keyscan_hint(host: &str, port: u16) -> String {
+    if port == 22 {
+        format!("ssh-keyscan -H {} >> {}", host, KNOWN_HOSTS_HINT_PATH)
+    } else {
+        format!(
+            "ssh-keyscan -H -p {} {} >> {}",
+            port, host, KNOWN_HOSTS_HINT_PATH
+        )
+    }
+}
+
 impl SshClientHandler {
     pub fn new(host: String, port: u16) -> Self {
         Self { host, port }
@@ -245,16 +269,7 @@ impl russh::client::Handler for SshClientHandler {
             Ok(false) => {
                 // Key not found in known_hosts — reject to prevent MITM.
                 // The operator must add the host key first.
-                #[cfg(windows)]
-                let hint = format!(
-                    "ssh-keyscan -H {} >> %USERPROFILE%\\.ssh\\known_hosts",
-                    self.host
-                );
-                #[cfg(not(windows))]
-                let hint = format!(
-                    "ssh-keyscan -H {} >> ~/.ssh/known_hosts",
-                    self.host
-                );
+                let hint = ssh_keyscan_hint(&self.host, self.port);
                 warn!(
                     "SSH host key for {}:{} not found in known_hosts. \
                      Add it with: {}",
@@ -922,6 +937,25 @@ impl ConnectionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ssh_keyscan_hint_omits_default_port() {
+        assert_eq!(
+            ssh_keyscan_hint("example.com", 22),
+            format!("ssh-keyscan -H example.com >> {}", KNOWN_HOSTS_HINT_PATH)
+        );
+    }
+
+    #[test]
+    fn test_ssh_keyscan_hint_includes_non_default_port() {
+        assert_eq!(
+            ssh_keyscan_hint("example.com", 2222),
+            format!(
+                "ssh-keyscan -H -p 2222 example.com >> {}",
+                KNOWN_HOSTS_HINT_PATH
+            )
+        );
+    }
 
     #[test]
     fn test_backoff_schedule() {

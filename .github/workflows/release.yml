@@ -53,11 +53,8 @@ jobs:
         if: matrix.cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Install OpenSSL (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          choco install openssl -y
-          echo "OPENSSL_DIR=C:\Program Files\OpenSSL-Win64" >> $env:GITHUB_ENV
+      - if: runner.os == 'Windows'
+        uses: ./.github/actions/install-openssl
 
       - name: Build (Unix)
         if: runner.os != 'Windows'
@@ -131,7 +128,7 @@ jobs:
       - name: Generate checksums
         working-directory: release
         run: |
-          sha256sum *.tar.gz *.zip > checksums-sha256.txt
+          sha256sum -- ./*.tar.gz ./*.zip > checksums-sha256.txt
           cat checksums-sha256.txt
 
       - name: Create GitHub Release

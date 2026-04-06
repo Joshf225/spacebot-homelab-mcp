@@ -209,8 +209,8 @@ mod desktop {
 #[cfg(feature = "notifications")]
 #[allow(unused_imports)]
 pub use desktop::{
-    notify_connected, notify_failed, DesktopDispatcher, Notification, NotificationDispatcher,
-    Severity, ThrottleGuard,
+    DesktopDispatcher, Notification, NotificationDispatcher, Severity, ThrottleGuard,
+    notify_connected, notify_failed,
 };
 
 // ── No-op stubs when `notifications` feature is disabled ─────────────────────
