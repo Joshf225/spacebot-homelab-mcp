@@ -44,23 +44,37 @@ pub enum DockerTransport {
 impl DockerClient {
     pub fn new(host: &DockerHost) -> Result<Self> {
         let (client, transport) = if host.host.starts_with("unix://") {
-            let socket_path = host.host.trim_start_matches("unix://");
-            let client =
-                bollard::Docker::connect_with_unix(socket_path, 120, bollard::API_DEFAULT_VERSION)
-                    .map_err(|error| {
-                        anyhow!(
-                            "Failed to connect to Docker socket {}: {}",
-                            socket_path,
-                            error
-                        )
-                    })?;
+            #[cfg(unix)]
+            {
+                let socket_path = host.host.trim_start_matches("unix://");
+                let client = bollard::Docker::connect_with_unix(
+                    socket_path,
+                    120,
+                    bollard::API_DEFAULT_VERSION,
+                )
+                .map_err(|error| {
+                    anyhow!(
+                        "Failed to connect to Docker socket {}: {}",
+                        socket_path,
+                        error
+                    )
+                })?;
 
-            (
-                client,
-                DockerTransport::UnixSocket {
-                    path: PathBuf::from(socket_path),
-                },
-            )
+                (
+                    client,
+                    DockerTransport::UnixSocket {
+                        path: PathBuf::from(socket_path),
+                    },
+                )
+            }
+            #[cfg(not(unix))]
+            {
+                return Err(anyhow!(
+                    "Unix socket connections (unix://) are only supported on Unix systems. \
+                     On Windows, use npipe:// or tcp:// instead. Got: '{}'",
+                    host.host
+                ));
+            }
         } else if host.host.starts_with("tcp://") {
             let has_tls =
                 host.key_path.is_some() && host.cert_path.is_some() && host.ca_path.is_some();

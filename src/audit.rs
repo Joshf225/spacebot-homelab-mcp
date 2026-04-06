@@ -86,6 +86,8 @@ impl AuditLogger {
 
         #[cfg(windows)]
         {
+            // Silence unused-variable warning; `entry` is only consumed on Unix.
+            let _ = entry;
             // Windows has no syslog equivalent. Log a one-time warning.
             // Future enhancement: write to Windows Event Log via `eventlog` crate.
             use std::sync::Once;
