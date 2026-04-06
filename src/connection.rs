@@ -28,6 +28,7 @@ pub struct DockerClient {
 
 #[derive(Debug, Clone)]
 pub enum DockerTransport {
+    #[allow(dead_code)] // Only constructed on Unix via unix:// connections
     UnixSocket {
         path: PathBuf,
     },
