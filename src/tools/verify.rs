@@ -84,27 +84,40 @@ pub async fn verify_operation(
 
     let minutes = last_minutes.unwrap_or(10);
     let cutoff = chrono::Utc::now() - chrono::Duration::minutes(minutes as i64);
-    let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S").to_string();
 
     // Scan the most recent retained lines first.
     let lines = read_recent_audit_lines(audit_path).await?;
     let scanned = lines.len();
 
+    let expected_tool_token = format!("tool={}", tool_name);
+
     let mut matches: Vec<String> = Vec::new();
     for line in &lines {
-        // Each line starts with a timestamp: "2025-01-15T10:30:00Z tool=..."
-        // Filter by tool name
-        if !line.contains(&format!("tool={}", tool_name)) {
+        // Audit log format (see audit.rs):
+        //   {timestamp} tool={name} host={host} result={result} [details={d}]
+        // Parse structured prefix fields instead of substring matching.
+        let mut tokens = line.split_whitespace();
+
+        // First token: timestamp (e.g. "2025-01-15T10:30:00Z").
+        // Skip lines with missing or unparseable timestamps.
+        let ts_str = match tokens.next() {
+            Some(t) => t,
+            None => continue,
+        };
+        let line_ts = match chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%dT%H:%M:%SZ") {
+            Ok(dt) => dt,
+            Err(_) => continue,
+        };
+
+        // Filter by time window using parsed timestamps.
+        if line_ts < cutoff.naive_utc() {
             continue;
         }
 
-        // Filter by time window — compare timestamp prefix lexicographically
-        // (ISO-8601 timestamps sort correctly as strings)
-        if let Some(ts_end) = line.find(' ') {
-            let line_ts = &line[..ts_end.min(19)]; // "2025-01-15T10:30:00"
-            if line_ts < cutoff_str.as_str() {
-                continue;
-            }
+        // Second token: must be exactly "tool={tool_name}" (not a substring).
+        match tokens.next() {
+            Some(tok) if tok == expected_tool_token => {}
+            _ => continue,
         }
 
         // Filter by content substring if provided
@@ -490,5 +503,86 @@ mod tests {
         let (verified, state) = classify_absent_error(&err_io);
         assert!(!verified, "IO error must NOT confirm container is absent");
         assert_eq!(state, "error");
+    }
+
+    #[tokio::test]
+    async fn test_verify_operation_skips_malformed_lines() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let log_content = format!(
+            // Valid line
+            "{now} tool=docker.container.delete host=local result=success details=real\n\
+             garbage-no-timestamp tool=docker.container.delete host=local result=success details=fake\n\
+             tool=docker.container.delete host=local result=success details=no-ts\n\
+             \n"
+        );
+        std::fs::write(tmp.path(), &log_content).unwrap();
+
+        let config = Config {
+            docker: Default::default(),
+            ssh: Default::default(),
+            audit: crate::config::AuditConfig {
+                file: Some(tmp.path().to_path_buf()),
+                syslog: None,
+            },
+            rate_limits: Default::default(),
+            tools: Default::default(),
+            confirm: None,
+            metrics: Default::default(),
+        };
+
+        let result = verify_operation(&config, "docker.container.delete", None, Some(5))
+            .await
+            .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(parsed["content"].as_str().unwrap()).unwrap();
+        assert_eq!(content["verified"], true);
+        // Only the valid line should match; garbage/malformed lines are skipped
+        assert_eq!(content["matches"].as_array().unwrap().len(), 1);
+        let first_match = content["matches"][0].as_str().unwrap();
+        assert!(first_match.contains("details=real"));
+    }
+
+    #[tokio::test]
+    async fn test_verify_operation_exact_tool_token_match() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let log_content = format!(
+            // tool=docker.container.delete should NOT match a search for
+            // "docker.container.del" (substring prefix) or vice versa
+            "{now} tool=docker.container.delete host=local result=success details=full-name\n\
+             {now} tool=docker.container.del host=local result=success details=prefix\n\
+             {now} tool=docker.container.delete_all host=local result=success details=suffix\n"
+        );
+        std::fs::write(tmp.path(), &log_content).unwrap();
+
+        let config = Config {
+            docker: Default::default(),
+            ssh: Default::default(),
+            audit: crate::config::AuditConfig {
+                file: Some(tmp.path().to_path_buf()),
+                syslog: None,
+            },
+            rate_limits: Default::default(),
+            tools: Default::default(),
+            confirm: None,
+            metrics: Default::default(),
+        };
+
+        // Search for exact tool name "docker.container.delete"
+        let result = verify_operation(&config, "docker.container.delete", None, Some(5))
+            .await
+            .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(parsed["content"].as_str().unwrap()).unwrap();
+        assert_eq!(content["verified"], true);
+        // Only the exact match should be returned, not the prefix or suffix
+        let arr = content["matches"].as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert!(arr[0].as_str().unwrap().contains("details=full-name"));
     }
 }
