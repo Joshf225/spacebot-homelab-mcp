@@ -398,6 +398,7 @@ impl HomelabMcpServer {
         let start = Instant::now();
         let result = docker::container_stop(
             self.manager.clone(),
+            self.confirmation.clone(),
             args.host,
             args.container,
             args.timeout,
@@ -805,12 +806,11 @@ impl HomelabMcpServer {
                     )
                     .await
                     .ok();
-                docker::container_stop(
+                docker::container_stop_confirmed(
                     self.manager.clone(),
-                    params.host,
+                    params.host.unwrap_or_else(|| "local".to_string()),
                     params.container,
                     params.timeout,
-                    None,
                     self.audit.clone(),
                 )
                 .await

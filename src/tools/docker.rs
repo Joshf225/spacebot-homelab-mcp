@@ -164,6 +164,7 @@ pub async fn container_start(
 
 pub async fn container_stop(
     manager: Arc<ConnectionManager>,
+    confirmation: Arc<ConfirmationManager>,
     host: Option<String>,
     container: String,
     timeout_secs: Option<u64>,
@@ -172,6 +173,7 @@ pub async fn container_stop(
 ) -> Result<String> {
     let host = host.unwrap_or_else(|| "local".to_string());
 
+    // Layer 3: dry_run support
     if dry_run.unwrap_or(false) {
         let output = format!(
             "DRY RUN: Would stop container '{}' on Docker host '{}'.",
@@ -184,6 +186,51 @@ pub async fn container_stop(
         return Ok(wrap_output_envelope("docker.container.stop", &output));
     }
 
+    // Layer 8: Confirmation flow — must happen BEFORE any execution
+    let params_json = serde_json::json!({
+        "host": host,
+        "container": container,
+        "timeout": timeout_secs,
+    })
+    .to_string();
+
+    if let Some(response) = confirmation
+        .check_and_maybe_require(
+            "docker.container.stop",
+            None, // No command text for docker tools — confirmation is "always"
+            &format!(
+                "About to STOP container '{}' on Docker host '{}'. The container will be terminated.",
+                container, host
+            ),
+            &params_json,
+        )
+        .await?
+    {
+        audit
+            .log(
+                "docker.container.stop",
+                &host,
+                "confirmation_required",
+                Some(&container),
+            )
+            .await
+            .ok();
+        return Ok(response);
+    }
+
+    // Execution proceeds only after confirmation (or if no confirmation rule configured)
+    container_stop_confirmed(manager, host, container, timeout_secs, audit).await
+}
+
+/// Execute container stop after confirmation has been satisfied.
+/// Called directly by `confirm_operation` for confirmed tokens.
+pub async fn container_stop_confirmed(
+    manager: Arc<ConnectionManager>,
+    host: String,
+    container: String,
+    timeout_secs: Option<u64>,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
     let result: Result<String> = async {
         let docker = manager.get_docker(&host)?;
         let options = timeout_secs.map(|timeout| StopContainerOptions {
