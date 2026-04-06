@@ -158,13 +158,30 @@ pub async fn verify_container_state(
         .await;
 
     let (verified, actual_state, detail) = match (expected_state, &inspect_result) {
-        // Expected: container should not exist (deleted)
-        ("absent" | "deleted", Err(_)) => (
+        // Expected: container should not exist (deleted).
+        // ONLY a Docker API 404 confirms absence. Other errors (auth,
+        // network, socket, etc.) must NOT be treated as "confirmed deleted".
+        (
+            "absent" | "deleted",
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }),
+        ) => (
             true,
             "absent".to_string(),
             format!(
                 "Container '{}' does not exist on host '{}' (confirmed deleted).",
                 container, host
+            ),
+        ),
+        ("absent" | "deleted", Err(e)) => (
+            false,
+            "error".to_string(),
+            format!(
+                "Cannot confirm container '{}' is absent on host '{}': {}. \
+                 Only a Docker 404 response confirms deletion; this error may \
+                 indicate an auth, network, or socket problem.",
+                container, host, e
             ),
         ),
         ("absent" | "deleted", Ok(details)) => {
@@ -417,5 +434,61 @@ mod tests {
         assert!(container_state_matches("stopped", "exited"));
         assert!(container_state_matches("exited", "stopped"));
         assert!(!container_state_matches("run", "running"));
+    }
+
+    /// Verify that only a Docker 404 error is treated as "confirmed absent",
+    /// while other errors (IO, auth, 500, etc.) are NOT.
+    ///
+    /// This exercises the same match pattern used in `verify_container_state`
+    /// without requiring a live Docker connection.
+    #[test]
+    fn test_absent_check_only_confirms_on_404_not_other_errors() {
+        use bollard::errors::Error as BollardError;
+
+        /// Mimics the match logic in `verify_container_state` for
+        /// `("absent" | "deleted", Err(_))` arms, returning `(verified, actual_state)`.
+        fn classify_absent_error(err: &BollardError) -> (bool, &'static str) {
+            match err {
+                BollardError::DockerResponseServerError {
+                    status_code: 404, ..
+                } => (true, "absent"),
+                _ => (false, "error"),
+            }
+        }
+
+        // 404 → confirmed absent
+        let err_404 = BollardError::DockerResponseServerError {
+            status_code: 404,
+            message: "No such container: test-nginx".to_string(),
+        };
+        let (verified, state) = classify_absent_error(&err_404);
+        assert!(verified, "Docker 404 should confirm container is absent");
+        assert_eq!(state, "absent");
+
+        // 500 → NOT confirmed absent
+        let err_500 = BollardError::DockerResponseServerError {
+            status_code: 500,
+            message: "Internal Server Error".to_string(),
+        };
+        let (verified, state) = classify_absent_error(&err_500);
+        assert!(!verified, "Docker 500 must NOT confirm container is absent");
+        assert_eq!(state, "error");
+
+        // 403 → NOT confirmed absent
+        let err_403 = BollardError::DockerResponseServerError {
+            status_code: 403,
+            message: "Forbidden".to_string(),
+        };
+        let (verified, state) = classify_absent_error(&err_403);
+        assert!(!verified, "Docker 403 must NOT confirm container is absent");
+        assert_eq!(state, "error");
+
+        // IO error → NOT confirmed absent
+        let err_io = BollardError::IOError {
+            err: std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "connection refused"),
+        };
+        let (verified, state) = classify_absent_error(&err_io);
+        assert!(!verified, "IO error must NOT confirm container is absent");
+        assert_eq!(state, "error");
     }
 }
