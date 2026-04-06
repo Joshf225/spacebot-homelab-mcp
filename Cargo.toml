@@ -23,6 +23,9 @@ schemars = "1.2"
 async-trait = "0.1"
 
 # Docker
+# NOTE: The `ssl` feature requires OpenSSL at compile time. On Windows CI,
+# OpenSSL must be installed (e.g., via choco). A future option is switching
+# to `rustls` to avoid the system dependency entirely.
 bollard = { version = "0.17", features = ["ssl"] }
 
 # SSH

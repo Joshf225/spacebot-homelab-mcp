@@ -68,16 +68,38 @@ impl AuditLogger {
     }
 
     /// Write audit entry to syslog via the system `logger` command.
-    /// This is portable across macOS and Linux without requiring a syslog crate.
+    /// On Unix, this is portable across macOS and Linux without requiring a syslog crate.
+    /// On Windows, syslog is not available; a one-time warning is logged instead.
     async fn write_to_syslog(&self, syslog_config: &crate::config::SyslogConfig, entry: &str) {
-        let priority = format!("{}.info", syslog_config.facility);
-        let result = tokio::process::Command::new("logger")
-            .args(["-p", &priority, "-t", &syslog_config.tag, entry.trim()])
-            .output()
-            .await;
+        #[cfg(unix)]
+        {
+            let priority = format!("{}.info", syslog_config.facility);
+            let result = tokio::process::Command::new("logger")
+                .args(["-p", &priority, "-t", &syslog_config.tag, entry.trim()])
+                .output()
+                .await;
 
-        if let Err(error) = result {
-            tracing::warn!("Failed to write to syslog via logger command: {}", error);
+            if let Err(error) = result {
+                tracing::warn!("Failed to write to syslog via logger command: {}", error);
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            // Silence unused-variable warning; `entry` is only consumed on Unix.
+            let _ = entry;
+            // Windows has no syslog equivalent. Log a one-time warning.
+            // Future enhancement: write to Windows Event Log via `eventlog` crate.
+            use std::sync::Once;
+            static WARN_ONCE: Once = Once::new();
+            WARN_ONCE.call_once(|| {
+                tracing::warn!(
+                    "Syslog audit logging is not supported on Windows. \
+                     Configure audit.file instead. (tag={}, facility={})",
+                    syslog_config.tag,
+                    syslog_config.facility
+                );
+            });
         }
     }
 }

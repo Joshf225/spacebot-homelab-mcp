@@ -4,9 +4,9 @@
 //! - **Connected** — MCP server is up and tools are ready.
 //! - **Failed**    — A fatal error occurred before the server could start.
 //!
-//! Cross-process deduplication: a Unix timestamp written to
-//! `/tmp/spacebot-homelab-mcp-notify` prevents notification spam when the
-//! process is restarted rapidly (within a 60-second window).
+//! Cross-process deduplication: a Unix timestamp written to a temp file
+//! (`<temp_dir>/spacebot-homelab-mcp-notify`) prevents notification spam when
+//! the process is restarted rapidly (within a 60-second window).
 //!
 //! Compile with `--no-default-features` to strip `notify-rust` entirely; all
 //! public functions become silent no-ops with no runtime overhead.
@@ -16,10 +16,12 @@
 #[cfg(feature = "notifications")]
 mod desktop {
     use std::fs;
-    use std::path::Path;
+    use std::path::PathBuf;
+    use std::sync::LazyLock;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    const THROTTLE_FILE: &str = "/tmp/spacebot-homelab-mcp-notify";
+    static THROTTLE_FILE: LazyLock<PathBuf> =
+        LazyLock::new(|| std::env::temp_dir().join("spacebot-homelab-mcp-notify"));
     const THROTTLE_SECS: u64 = 60;
 
     // ── Types ─────────────────────────────────────────────────────────────────
@@ -74,6 +76,16 @@ mod desktop {
                         notif.urgency(notify_rust::Urgency::Critical);
                     }
                 }
+
+                // Windows: use toast notification audio schema names
+                #[cfg(target_os = "windows")]
+                {
+                    let sound_name = match n.severity {
+                        Severity::Success => "ms-winsoundevent:Notification.Default",
+                        Severity::Error => "ms-winsoundevent:Notification.Looping.Alarm",
+                    };
+                    notif.sound_name(sound_name);
+                }
             }
 
             notif.show().map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -93,7 +105,7 @@ mod desktop {
         /// Returns `true` if a failure notification should be sent now.
         /// Returns `false` if one was already sent within the last 60 seconds.
         pub fn should_notify_failure() -> bool {
-            let path = Path::new(THROTTLE_FILE);
+            let path = THROTTLE_FILE.as_path();
             if !path.exists() {
                 return true;
             }
@@ -118,13 +130,13 @@ mod desktop {
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            let _ = fs::write(THROTTLE_FILE, now.to_string());
+            let _ = fs::write(THROTTLE_FILE.as_path(), now.to_string());
         }
 
         /// Removes the throttle file so the next failure always notifies.
         /// Called on success to reset the window.
         pub fn clear() {
-            let _ = fs::remove_file(THROTTLE_FILE);
+            let _ = fs::remove_file(THROTTLE_FILE.as_path());
         }
     }
 

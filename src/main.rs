@@ -47,6 +47,19 @@ enum Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // On Windows, many Rust SSH libraries look for HOME to find ~/.ssh/known_hosts.
+    // Set it from USERPROFILE so they work on native Windows.
+    #[cfg(windows)]
+    {
+        if std::env::var("HOME").is_err() {
+            if let Ok(profile) = std::env::var("USERPROFILE") {
+                unsafe {
+                    std::env::set_var("HOME", &profile);
+                }
+            }
+        }
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()

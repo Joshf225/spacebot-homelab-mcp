@@ -4,6 +4,15 @@
 
 set -euo pipefail
 
+# Detect Windows environments and redirect to PowerShell installer
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    echo "Detected Windows environment. Use install.ps1 instead:"
+    echo "  irm https://raw.githubusercontent.com/Joshf225/spacebot-homelab-mcp/master/install.ps1 | iex"
+    exit 1
+    ;;
+esac
+
 REPO="Joshf225/spacebot-homelab-mcp"
 BINARY="spacebot-homelab-mcp"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"

@@ -28,30 +28,54 @@ pub struct DockerClient {
 
 #[derive(Debug, Clone)]
 pub enum DockerTransport {
-    UnixSocket { path: PathBuf },
-    Tcp { host: String, tls: bool },
+    #[allow(dead_code)] // Only constructed on Unix via unix:// connections
+    UnixSocket {
+        path: PathBuf,
+    },
+    Tcp {
+        host: String,
+        tls: bool,
+    },
+    #[allow(dead_code)] // Only constructed on Windows via npipe:// connections
+    NamedPipe {
+        path: String,
+    },
 }
 
 impl DockerClient {
     pub fn new(host: &DockerHost) -> Result<Self> {
         let (client, transport) = if host.host.starts_with("unix://") {
-            let socket_path = host.host.trim_start_matches("unix://");
-            let client =
-                bollard::Docker::connect_with_unix(socket_path, 120, bollard::API_DEFAULT_VERSION)
-                    .map_err(|error| {
-                        anyhow!(
-                            "Failed to connect to Docker socket {}: {}",
-                            socket_path,
-                            error
-                        )
-                    })?;
+            #[cfg(unix)]
+            {
+                let socket_path = host.host.trim_start_matches("unix://");
+                let client = bollard::Docker::connect_with_unix(
+                    socket_path,
+                    120,
+                    bollard::API_DEFAULT_VERSION,
+                )
+                .map_err(|error| {
+                    anyhow!(
+                        "Failed to connect to Docker socket {}: {}",
+                        socket_path,
+                        error
+                    )
+                })?;
 
-            (
-                client,
-                DockerTransport::UnixSocket {
-                    path: PathBuf::from(socket_path),
-                },
-            )
+                (
+                    client,
+                    DockerTransport::UnixSocket {
+                        path: PathBuf::from(socket_path),
+                    },
+                )
+            }
+            #[cfg(not(unix))]
+            {
+                return Err(anyhow!(
+                    "Unix socket connections (unix://) are only supported on Unix systems. \
+                     On Windows, use npipe:// or tcp:// instead. Got: '{}'",
+                    host.host
+                ));
+            }
         } else if host.host.starts_with("tcp://") {
             let has_tls =
                 host.key_path.is_some() && host.cert_path.is_some() && host.ca_path.is_some();
@@ -113,9 +137,40 @@ impl DockerClient {
                     },
                 )
             }
+        } else if host.host.starts_with("npipe://") {
+            #[cfg(windows)]
+            {
+                let pipe_path = &host.host;
+                let client = bollard::Docker::connect_with_named_pipe(
+                    pipe_path,
+                    120,
+                    bollard::API_DEFAULT_VERSION,
+                )
+                .map_err(|error| {
+                    anyhow!(
+                        "Failed to connect to Docker named pipe {}: {}",
+                        pipe_path,
+                        error
+                    )
+                })?;
+
+                (
+                    client,
+                    DockerTransport::NamedPipe {
+                        path: pipe_path.to_string(),
+                    },
+                )
+            }
+            #[cfg(not(windows))]
+            {
+                return Err(anyhow!(
+                    "Named pipe connections (npipe://) are only supported on Windows. Got: '{}'",
+                    host.host
+                ));
+            }
         } else {
             return Err(anyhow!(
-                "Invalid Docker connection string '{}'. Expected unix:// or tcp://",
+                "Invalid Docker connection string '{}'. Expected unix://, tcp://, or npipe://",
                 host.host
             ));
         };
@@ -148,6 +203,7 @@ impl DockerClient {
                     format!("tcp {}", host)
                 }
             }
+            DockerTransport::NamedPipe { path } => format!("named pipe {}", path),
         }
     }
 }
@@ -186,6 +242,23 @@ pub struct SshClientHandler {
     port: u16,
 }
 
+#[cfg(windows)]
+const KNOWN_HOSTS_HINT_PATH: &str = "%USERPROFILE%\\.ssh\\known_hosts";
+
+#[cfg(not(windows))]
+const KNOWN_HOSTS_HINT_PATH: &str = "~/.ssh/known_hosts";
+
+fn ssh_keyscan_hint(host: &str, port: u16) -> String {
+    if port == 22 {
+        format!("ssh-keyscan -H {} >> {}", host, KNOWN_HOSTS_HINT_PATH)
+    } else {
+        format!(
+            "ssh-keyscan -H -p {} {} >> {}",
+            port, host, KNOWN_HOSTS_HINT_PATH
+        )
+    }
+}
+
 impl SshClientHandler {
     pub fn new(host: String, port: u16) -> Self {
         Self { host, port }
@@ -210,19 +283,19 @@ impl russh::client::Handler for SshClientHandler {
             }
             Ok(false) => {
                 // Key not found in known_hosts — reject to prevent MITM.
-                // The operator must add the host key first:
-                //   ssh-keyscan -H <host> >> ~/.ssh/known_hosts
+                // The operator must add the host key first.
+                let hint = ssh_keyscan_hint(&self.host, self.port);
                 warn!(
                     "SSH host key for {}:{} not found in known_hosts. \
-                     Add it with: ssh-keyscan -H {} >> ~/.ssh/known_hosts",
-                    self.host, self.port, self.host
+                     Add it with: {}",
+                    self.host, self.port, hint
                 );
                 Err(anyhow!(
                     "SSH host key for {}:{} not found in known_hosts. \
-                     Run: ssh-keyscan -H {} >> ~/.ssh/known_hosts",
+                     Run: {}",
                     self.host,
                     self.port,
-                    self.host
+                    hint
                 ))
             }
             Err(russh::keys::Error::KeyChanged { line }) => {
@@ -879,6 +952,25 @@ impl ConnectionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ssh_keyscan_hint_omits_default_port() {
+        assert_eq!(
+            ssh_keyscan_hint("example.com", 22),
+            format!("ssh-keyscan -H example.com >> {}", KNOWN_HOSTS_HINT_PATH)
+        );
+    }
+
+    #[test]
+    fn test_ssh_keyscan_hint_includes_non_default_port() {
+        assert_eq!(
+            ssh_keyscan_hint("example.com", 2222),
+            format!(
+                "ssh-keyscan -H -p 2222 example.com >> {}",
+                KNOWN_HOSTS_HINT_PATH
+            )
+        );
+    }
 
     #[test]
     fn test_backoff_schedule() {

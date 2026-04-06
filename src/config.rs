@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -262,18 +262,15 @@ impl Config {
         let config_path = if let Some(path) = path {
             path
         } else {
-            let home =
-                std::env::var("HOME").map_err(|_| anyhow!("HOME environment variable not set"))?;
-            PathBuf::from(home)
-                .join(".spacebot-homelab")
-                .join("config.toml")
+            let home = home_dir()?;
+            home.join(".spacebot-homelab").join("config.toml")
         };
 
         info!("Loading configuration from {:?}", config_path);
 
         if !config_path.exists() {
             return Err(anyhow!(
-                "Configuration file not found at {:?}. Create ~/.spacebot-homelab/config.toml or provide --config <path>",
+                "Configuration file not found at {:?}. Create it or provide --config <path>.",
                 config_path
             ));
         }
@@ -296,13 +293,19 @@ impl Config {
     fn validate(&mut self) -> Result<()> {
         for host in self.docker.hosts.values_mut() {
             if let Some(path) = &host.cert_path {
-                host.cert_path = Some(expand_home(path));
+                host.cert_path = Some(expand_home(path).with_context(|| {
+                    format!("Could not expand Docker certificate path {:?}", path)
+                })?);
             }
             if let Some(path) = &host.key_path {
-                host.key_path = Some(expand_home(path));
+                host.key_path = Some(expand_home(path).with_context(|| {
+                    format!("Could not expand Docker private key path {:?}", path)
+                })?);
             }
             if let Some(path) = &host.ca_path {
-                host.ca_path = Some(expand_home(path));
+                host.ca_path = Some(expand_home(path).with_context(|| {
+                    format!("Could not expand Docker CA certificate path {:?}", path)
+                })?);
             }
 
             if let Some(path) = &host.cert_path {
@@ -324,7 +327,13 @@ impl Config {
                 );
             }
 
-            host.private_key_path = expand_home(&host.private_key_path);
+            let original_private_key_path = host.private_key_path.clone();
+            host.private_key_path = expand_home(&original_private_key_path).with_context(|| {
+                format!(
+                    "Could not expand SSH private key path for host '{}': {:?}",
+                    name, original_private_key_path
+                )
+            })?;
             ensure_exists(
                 &host.private_key_path,
                 &format!("SSH private key for host '{}'", name),
@@ -351,7 +360,8 @@ impl Config {
         }
 
         if let Some(audit_path) = &self.audit.file {
-            let audit_path = expand_home(audit_path);
+            let audit_path = expand_home(audit_path)
+                .with_context(|| format!("Could not expand audit log path {:?}", audit_path))?;
             self.audit.file = Some(audit_path.clone());
             if let Some(parent) = audit_path.parent() {
                 if !parent.exists() {
@@ -365,6 +375,20 @@ impl Config {
     }
 }
 
+/// Cross-platform home directory resolution.
+/// Checks HOME (Unix / Git Bash on Windows), then USERPROFILE (native Windows).
+fn home_dir() -> Result<PathBuf> {
+    if let Ok(home) = std::env::var("HOME") {
+        return Ok(PathBuf::from(home));
+    }
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        return Ok(PathBuf::from(profile));
+    }
+    Err(anyhow!(
+        "Could not determine home directory. Set HOME or USERPROFILE."
+    ))
+}
+
 fn ensure_exists(path: &Path, description: &str) -> Result<()> {
     if !path.exists() {
         return Err(anyhow!("{} not found at {:?}", description, path));
@@ -372,21 +396,17 @@ fn ensure_exists(path: &Path, description: &str) -> Result<()> {
     Ok(())
 }
 
-fn expand_home(path: &Path) -> PathBuf {
+fn expand_home(path: &Path) -> Result<PathBuf> {
     let path_str = path.to_string_lossy();
     if path_str == "~" {
-        return std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| path.to_path_buf());
+        return home_dir();
     }
 
     if let Some(rest) = path_str.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join(rest);
-        }
+        return Ok(home_dir()?.join(rest));
     }
 
-    path.to_path_buf()
+    Ok(path.to_path_buf())
 }
 
 /// Resolve environment variable references in a string value.
@@ -460,14 +480,54 @@ fn check_config_permissions(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-fn check_config_permissions(_path: &Path) -> Result<()> {
-    // Permission checks only supported on Unix
+fn check_config_permissions(path: &Path) -> Result<()> {
+    tracing::info!(
+        "Config permission checks are not enforced on this platform. \
+         Ensure {:?} is only readable by your user account.",
+        path
+    );
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{LazyLock, Mutex};
+
+    static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    struct EnvRestore {
+        previous: Vec<(String, Option<String>)>,
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            for (key, value) in &self.previous {
+                if let Some(value) = value {
+                    unsafe { std::env::set_var(key, value) };
+                } else {
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+    }
+
+    fn set_env_vars(updates: &[(&str, Option<&str>)]) -> EnvRestore {
+        let previous = updates
+            .iter()
+            .map(|(key, _)| ((*key).to_string(), std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+
+        for (key, value) in updates {
+            if let Some(value) = value {
+                unsafe { std::env::set_var(key, value) };
+            } else {
+                unsafe { std::env::remove_var(key) };
+            }
+        }
+
+        EnvRestore { previous }
+    }
 
     #[test]
     fn test_tools_config_none_enables_all() {
@@ -497,24 +557,63 @@ mod tests {
 
     #[test]
     fn test_resolve_env_var_dollar_syntax() {
-        unsafe { std::env::set_var("TEST_PASSPHRASE_DOLLAR", "secret123") };
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _env = set_env_vars(&[("TEST_PASSPHRASE_DOLLAR", Some("secret123"))]);
         let result = resolve_env_var("$TEST_PASSPHRASE_DOLLAR");
         assert_eq!(result, "secret123");
-        unsafe { std::env::remove_var("TEST_PASSPHRASE_DOLLAR") };
     }
 
     #[test]
     fn test_resolve_env_var_braces_syntax() {
-        unsafe { std::env::set_var("TEST_PASSPHRASE_BRACES", "secret123") };
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _env = set_env_vars(&[("TEST_PASSPHRASE_BRACES", Some("secret123"))]);
         let result = resolve_env_var("${TEST_PASSPHRASE_BRACES}");
         assert_eq!(result, "secret123");
-        unsafe { std::env::remove_var("TEST_PASSPHRASE_BRACES") };
     }
 
     #[test]
     fn test_resolve_env_var_literal_passthrough() {
         let result = resolve_env_var("literal_value");
         assert_eq!(result, "literal_value");
+    }
+
+    #[test]
+    fn test_expand_home_expands_tilde_using_home() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join("spacebot-home-test");
+        let home_string = home.display().to_string();
+        let _env = set_env_vars(&[("HOME", Some(home_string.as_str())), ("USERPROFILE", None)]);
+
+        let result = expand_home(Path::new("~/config.toml")).unwrap();
+        assert_eq!(result, home.join("config.toml"));
+    }
+
+    #[test]
+    fn test_expand_home_falls_back_to_userprofile() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let profile = std::env::temp_dir().join("spacebot-userprofile-test");
+        let profile_string = profile.display().to_string();
+        let _env = set_env_vars(&[
+            ("HOME", None),
+            ("USERPROFILE", Some(profile_string.as_str())),
+        ]);
+
+        let result = expand_home(Path::new("~/.ssh/id_ed25519")).unwrap();
+        assert_eq!(result, profile.join(".ssh/id_ed25519"));
+    }
+
+    #[test]
+    fn test_expand_home_errors_when_home_is_unavailable() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _env = set_env_vars(&[("HOME", None), ("USERPROFILE", None)]);
+
+        let error = expand_home(Path::new("~/config.toml")).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Could not determine home directory"),
+            "unexpected error: {error}"
+        );
     }
 
     #[cfg(unix)]
