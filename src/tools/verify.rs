@@ -6,18 +6,49 @@
 //! the client can call this tool after any destructive action to prove the
 //! action was (or was not) executed by this server.
 
-use std::sync::Arc;
+use std::{collections::VecDeque, path::Path, sync::Arc};
 
 use anyhow::{Result, anyhow};
 use tokio::fs;
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::audit::AuditLogger;
 use crate::config::Config;
 use crate::connection::ConnectionManager;
 use crate::tools::wrap_output_envelope;
 
-/// Maximum number of audit log lines to scan (most recent first).
+/// Maximum number of recent audit log lines to retain and scan.
 const MAX_SCAN_LINES: usize = 500;
+
+async fn read_recent_audit_lines(audit_path: &Path) -> Result<Vec<String>> {
+    let file = fs::File::open(audit_path)
+        .await
+        .map_err(|e| anyhow!("Failed to read audit log: {}", e))?;
+    let mut reader = BufReader::new(file).lines();
+    let mut lines = VecDeque::with_capacity(MAX_SCAN_LINES);
+
+    while let Some(line) = reader
+        .next_line()
+        .await
+        .map_err(|e| anyhow!("Failed to read audit log: {}", e))?
+    {
+        if lines.len() == MAX_SCAN_LINES {
+            lines.pop_front();
+        }
+        lines.push_back(line);
+    }
+
+    Ok(lines.into_iter().rev().collect())
+}
+
+fn container_state_matches(expected: &str, actual: &str) -> bool {
+    let expected = expected.trim().to_lowercase();
+    let actual = actual.trim().to_lowercase();
+
+    actual == expected
+        || (expected == "stopped" && actual == "exited")
+        || (expected == "exited" && actual == "stopped")
+}
 
 /// Verify an operation by checking the audit log for matching entries.
 ///
@@ -31,14 +62,12 @@ pub async fn verify_operation(
     contains: Option<&str>,
     last_minutes: Option<u64>,
 ) -> Result<String> {
-    let audit_path = config
-        .audit
-        .file
-        .as_ref()
-        .ok_or_else(|| anyhow!(
+    let audit_path = config.audit.file.as_ref().ok_or_else(|| {
+        anyhow!(
             "Audit file logging is not configured. \
              Set [audit] file = \"/path/to/audit.log\" in config.toml to enable verification."
-        ))?;
+        )
+    })?;
 
     if !audit_path.exists() {
         return Ok(wrap_output_envelope(
@@ -53,16 +82,12 @@ pub async fn verify_operation(
         ));
     }
 
-    let content = fs::read_to_string(audit_path)
-        .await
-        .map_err(|e| anyhow!("Failed to read audit log: {}", e))?;
-
     let minutes = last_minutes.unwrap_or(10);
     let cutoff = chrono::Utc::now() - chrono::Duration::minutes(minutes as i64);
     let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S").to_string();
 
-    // Scan lines in reverse (most recent first), limited to MAX_SCAN_LINES
-    let lines: Vec<&str> = content.lines().rev().take(MAX_SCAN_LINES).collect();
+    // Scan the most recent retained lines first.
+    let lines = read_recent_audit_lines(audit_path).await?;
     let scanned = lines.len();
 
     let mut matches: Vec<String> = Vec::new();
@@ -78,8 +103,7 @@ pub async fn verify_operation(
         if let Some(ts_end) = line.find(' ') {
             let line_ts = &line[..ts_end.min(19)]; // "2025-01-15T10:30:00"
             if line_ts < cutoff_str.as_str() {
-                // Past the time window; since we're scanning newest-first, stop
-                break;
+                continue;
             }
         }
 
@@ -138,7 +162,10 @@ pub async fn verify_container_state(
         ("absent" | "deleted", Err(_)) => (
             true,
             "absent".to_string(),
-            format!("Container '{}' does not exist on host '{}' (confirmed deleted).", container, host),
+            format!(
+                "Container '{}' does not exist on host '{}' (confirmed deleted).",
+                container, host
+            ),
         ),
         ("absent" | "deleted", Ok(details)) => {
             let state = details
@@ -164,11 +191,17 @@ pub async fn verify_container_state(
                 .and_then(|s| s.status.as_ref())
                 .map(|s| format!("{:?}", s).to_lowercase())
                 .unwrap_or_else(|| "unknown".to_string());
-            let matches = state.contains(&expected.to_lowercase());
+            let matches = container_state_matches(expected, &state);
             let detail = if matches {
-                format!("Container '{}' on host '{}' is in state '{}' (matches expected '{}').", container, host, state, expected)
+                format!(
+                    "Container '{}' on host '{}' is in state '{}' (matches expected '{}').",
+                    container, host, state, expected
+                )
             } else {
-                format!("Container '{}' on host '{}' is in state '{}' (expected '{}').", container, host, state, expected)
+                format!(
+                    "Container '{}' on host '{}' is in state '{}' (expected '{}').",
+                    container, host, state, expected
+                )
             };
             (matches, state, detail)
         }
@@ -333,5 +366,56 @@ mod tests {
             serde_json::from_str(parsed["content"].as_str().unwrap()).unwrap();
         assert_eq!(content["verified"], false);
         assert!(content["matches"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_verify_operation_keeps_scanning_past_old_out_of_order_lines() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let fresh = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let stale = (chrono::Utc::now() - chrono::Duration::minutes(30))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let log_content = format!(
+            "{fresh} tool=docker.container.delete host=local result=success details=test-nginx\n\
+             {stale} tool=docker.container.delete host=local result=success details=old-nginx\n\
+             {fresh} tool=docker.container.delete host=local result=success details=other-nginx\n"
+        );
+        std::fs::write(tmp.path(), &log_content).unwrap();
+
+        let config = Config {
+            docker: Default::default(),
+            ssh: Default::default(),
+            audit: crate::config::AuditConfig {
+                file: Some(tmp.path().to_path_buf()),
+                syslog: None,
+            },
+            rate_limits: Default::default(),
+            tools: Default::default(),
+            confirm: None,
+            metrics: Default::default(),
+        };
+
+        let result = verify_operation(
+            &config,
+            "docker.container.delete",
+            Some("test-nginx"),
+            Some(5),
+        )
+        .await
+        .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let content: serde_json::Value =
+            serde_json::from_str(parsed["content"].as_str().unwrap()).unwrap();
+        assert_eq!(content["verified"], true);
+        assert_eq!(content["matches"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_container_state_matches_uses_exact_states_with_stopped_alias() {
+        assert!(container_state_matches("running", "running"));
+        assert!(container_state_matches("stopped", "exited"));
+        assert!(container_state_matches("exited", "stopped"));
+        assert!(!container_state_matches("run", "running"));
     }
 }

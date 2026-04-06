@@ -67,16 +67,10 @@ mod tests {
         );
 
         let executed_at = parsed["executed_at"].as_str().unwrap();
-        assert!(
-            executed_at.contains('T'),
-            "executed_at should be ISO-8601"
-        );
+        assert!(executed_at.contains('T'), "executed_at should be ISO-8601");
 
         let version = parsed["server_version"].as_str().unwrap();
-        assert!(
-            !version.is_empty(),
-            "server_version should be non-empty"
-        );
+        assert!(!version.is_empty(), "server_version should be non-empty");
     }
 
     #[test]
