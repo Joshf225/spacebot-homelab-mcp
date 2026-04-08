@@ -116,7 +116,7 @@ First actions:
 curl -I https://example.com
 curl -I https://1.1.1.1
 ```
-Compare results. If IP works, DNS works -- isolate the DNS override path.
+Compare results. If IP connectivity works but DNS resolution fails, isolate and test the DNS override path.
 
 Platform-specific DNS inspection:
 - **macOS:** `scutil --dns`
@@ -194,8 +194,8 @@ tailscale status
 tailscale set --accept-routes=true
 ```
 Verify the route is in the system route table:
-- macOS: `netstat -rn -f inet | grep <SUBNET_PREFIX>`
-- Linux: `ip route show | grep <SUBNET_PREFIX>`
+- macOS: `netstat -rn -f inet | grep <SUBNET_CIDR>`
+- Linux: `ip route show | grep <SUBNET_CIDR>`
 - Windows: `route print` (PowerShell)
 
 If the client is not accepting routes, fix that first.
@@ -261,7 +261,7 @@ tailscale netcheck
 tailscale ping <ROUTER_NODE>
 tailscale set --accept-routes=true
 tailscale set --accept-routes=true --accept-dns=false
-netstat -rn -f inet | grep <SUBNET_PREFIX>
+netstat -rn -f inet | grep <SUBNET_CIDR>
 scutil --dns
 ```
 
@@ -273,7 +273,7 @@ tailscale netcheck
 tailscale ping <ROUTER_NODE>
 tailscale set --accept-routes=true
 tailscale set --accept-routes=true --accept-dns=false
-ip route show | grep <SUBNET_PREFIX>
+ip route show | grep <SUBNET_CIDR>
 resolvectl status
 ```
 
