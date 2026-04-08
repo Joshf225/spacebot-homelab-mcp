@@ -81,7 +81,7 @@ First actions:
 tailscale status
 tailscale netcheck
 curl -I https://example.com        # DNS-dependent
-curl -I https://1.1.1.1            # DNS-independent
+curl -I --insecure https://1.1.1.1 # DNS-independent
 ```
 If hostname-based requests fail but IP-based succeed, the problem is DNS. Fix:
 ```bash
@@ -114,7 +114,7 @@ Most likely cause: **DNS failure**, not transport.
 First actions:
 ```bash
 curl -I https://example.com
-curl -I https://1.1.1.1
+curl -I --insecure https://1.1.1.1
 ```
 Compare results. If IP connectivity works but DNS resolution fails, isolate and test the DNS override path.
 
@@ -175,7 +175,7 @@ Platform-specific:
 
 **Transport-oriented checks:**
 ```bash
-curl -I https://1.1.1.1
+curl -I --insecure https://1.1.1.1
 ping -c 2 1.1.1.1
 tailscale netcheck
 ```
@@ -299,7 +299,7 @@ nc -vz <LAN_TARGET_IP> <TARGET_PORT>
 curl -kI https://<LAN_TARGET_IP>:<TARGET_PORT>
 curl --connect-timeout 5 http://<LAN_TARGET_IP>:<TARGET_PORT>
 curl -I https://example.com
-curl -I https://1.1.1.1
+curl -I --insecure https://1.1.1.1
 ```
 
 Windows (PowerShell):
@@ -310,7 +310,7 @@ Test-NetConnection -ComputerName <LAN_TARGET_IP> -Port <TARGET_PORT>
 curl.exe -kI https://<LAN_TARGET_IP>:<TARGET_PORT>
 curl.exe --connect-timeout 5 http://<LAN_TARGET_IP>:<TARGET_PORT>
 curl.exe -I https://example.com
-curl.exe -I https://1.1.1.1
+curl.exe -I --insecure https://1.1.1.1
 ```
 
 ## Containerized router checks
