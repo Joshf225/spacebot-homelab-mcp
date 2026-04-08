@@ -18,8 +18,8 @@ tailscale set --accept-routes=true
 
 Verify the subnet route is installed in the system route table:
 
-- **macOS:** `netstat -rn -f inet | grep <SUBNET_PREFIX>`
-- **Linux:** `ip route show | grep <SUBNET_PREFIX>`
+- **macOS:** `netstat -rn -f inet | grep <SUBNET_CIDR>`
+- **Linux:** `ip route show | grep <SUBNET_CIDR>`
 - **Windows (PowerShell):** `route print`
 
 ## DNS override setting
@@ -74,7 +74,7 @@ Resolve-DnsName example.com
 ping -c 3 <LAN_TARGET_IP>
 nc -vz <LAN_TARGET_IP> <TARGET_PORT>
 curl -kI https://<LAN_TARGET_IP>:<TARGET_PORT>
-curl --connect-timeout 5 http://<LAN_TARGET_IP>
+curl --connect-timeout 5 http://<LAN_TARGET_IP>:<TARGET_PORT>
 ```
 
 ## Full diagnostic sequence
@@ -83,7 +83,7 @@ Run these in order for a complete client-side assessment:
 
 1. `tailscale status` -- confirm connected, identify router node.
 2. `tailscale ping <ROUTER_NODE>` -- confirm overlay reachability.
-3. Check route table for `<SUBNET_PREFIX>` -- confirm route installed.
+3. Check route table for `<SUBNET_CIDR>` -- confirm route installed.
 4. `ping -c 3 <LAN_TARGET_IP>` -- confirm LAN transport.
 5. `nc -vz <LAN_TARGET_IP> <TARGET_PORT>` -- confirm service port.
 6. `curl -I https://example.com` -- confirm DNS resolution works.
