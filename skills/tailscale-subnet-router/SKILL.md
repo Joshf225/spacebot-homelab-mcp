@@ -289,15 +289,28 @@ route print
 Get-DnsClientServerAddress
 ```
 
-## Service reachability tests (any platform)
+## Service reachability tests
+
+Unix-like platforms:
 
 ```bash
 ping -c 3 <LAN_TARGET_IP>
 nc -vz <LAN_TARGET_IP> <TARGET_PORT>
 curl -kI https://<LAN_TARGET_IP>:<TARGET_PORT>
-curl --connect-timeout 5 http://<LAN_TARGET_IP>
+curl --connect-timeout 5 http://<LAN_TARGET_IP>:<TARGET_PORT>
 curl -I https://example.com
 curl -I https://1.1.1.1
+```
+
+Windows (PowerShell):
+
+```powershell
+ping -n 3 <LAN_TARGET_IP>
+Test-NetConnection -ComputerName <LAN_TARGET_IP> -Port <TARGET_PORT>
+curl.exe -kI https://<LAN_TARGET_IP>:<TARGET_PORT>
+curl.exe --connect-timeout 5 http://<LAN_TARGET_IP>:<TARGET_PORT>
+curl.exe -I https://example.com
+curl.exe -I https://1.1.1.1
 ```
 
 ## Containerized router checks
