@@ -227,7 +227,7 @@ args = ["server", "--config", "~/.spacebot-homelab/config.toml"]
 | Tool | Description | Destructive | Confirmation |
 |------|-------------|:-----------:|:------------:|
 | `proxmox.vm.start` | Start a Proxmox VM or LXC container | No | — |
-| `proxmox.vm.stop` | Gracefully stop a Proxmox VM or LXC container | Yes | Yes |
+| `proxmox.vm.stop` | Force-stop a Proxmox VM or LXC container immediately | Yes | Yes |
 | `proxmox.vm.create` | Create a new Proxmox VM or LXC container | Yes | Yes |
 | `proxmox.vm.clone` | Clone an existing Proxmox VM | No | — |
 | `proxmox.vm.delete` | Permanently delete a Proxmox VM or LXC container | Yes | Yes |
