@@ -34,6 +34,13 @@ Before the Spacebot web UI changes, the user-visible failure mode was:
 3. The agent could get stuck in a text-only confirmation loop.
 4. In practice, users often had to disable `[confirm]` rules for destructive homelab commands.
 
+After the initial web UI implementation, retesting surfaced two more client-side issues:
+
+1. The web UI could render the confirmation card before the assistant's pre-confirmation explanation text arrived.
+2. Workers could still describe a destructive MCP action with past-tense success wording even when the MCP tool had only returned `confirmation_required`.
+
+These were follow-up `spacebot` issues, not `spacebot-homelab-mcp` protocol issues, and were fixed in later iterations.
+
 ## What Already Existed In `spacebot-homelab-mcp`
 
 The MCP server already had the correct server-side behavior:
@@ -66,6 +73,7 @@ The main Spacebot app needed both backend and frontend work.
 - provide `Confirm action` and `Dismiss` controls
 - remove the card when resolved
 - show the confirmed result back in the chat transcript
+- delay rendering the confirmation card until the assistant's pre-confirmation message arrives, with a short fallback timeout if the message is delayed
 
 ### Prompting / Agent Behavior
 
@@ -75,6 +83,8 @@ The Spacebot channel prompt also needed updates so the agent would:
 - stop saying things like `Stopping it now` without actually calling tools
 - use a worker for MCP-backed infrastructure actions
 - call the destructive MCP tool first, then let the UI handle confirmation
+- treat `confirmation_required` as a terminal pre-confirmation state, not as a successful execution result
+- keep pre-confirmation and post-confirmation messaging separate
 
 ## Files Changed In `spacebot`
 
@@ -112,6 +122,7 @@ The Spacebot channel prompt also needed updates so the agent would:
   - Added the visible confirmation card UI.
   - Added confirm and dismiss actions.
   - Added live updates for pending/resolved confirmations.
+  - Added delayed confirmation-card reveal so the explanatory assistant message can land before the user sees the confirm controls.
 
 - `interface/src/hooks/useLiveContext.tsx`
   - Bridged backend confirmation events into browser events for the portal chat UI.
@@ -120,12 +131,18 @@ The Spacebot channel prompt also needed updates so the agent would:
 
 - `prompts/en/adapters/portal.md.j2`
   - New portal-specific guidance for MCP destructive actions and UI confirmations.
+  - Clarified that pre-confirmation messaging must describe pending confirmation only, and post-confirmation messaging should be a separate executed result.
 
 - `prompts/en/channel.md.j2`
   - Added explicit instruction that MCP-backed infrastructure actions are worker tasks.
 
+- `prompts/en/worker.md.j2`
+  - Added explicit worker guidance that `confirmation_required` means the destructive action has NOT executed yet.
+  - Prevents worker summaries from using past-tense success wording before the user confirms in the web UI.
+
 - `src/prompts/engine.rs`
   - Registered the `portal` adapter prompt and added prompt tests.
+  - Added worker-prompt coverage to verify `confirmation_required` guidance stays in the worker system prompt.
 
 - `src/prompts/text.rs`
   - Registered the new `adapters/portal` prompt text entry.
@@ -164,10 +181,11 @@ For a destructive request like `stop VM 100 on proxmox-homelab`:
 2. The worker calls `proxmox.vm.stop`.
 3. `spacebot-homelab-mcp` returns `confirmation_required` with a token.
 4. Spacebot stores the pending confirmation for the portal conversation.
-5. The web UI shows a confirmation card.
-6. The user clicks `Confirm action`.
-7. Spacebot backend calls `confirm_operation`.
-8. The final tool result is posted back into the chat transcript.
+5. Spacebot sends a pre-confirmation assistant message explaining that the action is pending confirmation.
+6. The web UI shows a confirmation card after that explanatory message arrives, with a short fallback delay if needed.
+7. The user clicks `Confirm action`.
+8. Spacebot backend calls `confirm_operation`.
+9. The final tool result is posted back into the chat transcript.
 
 ## Validation Notes
 
@@ -176,6 +194,9 @@ The web UI integration was validated by:
 - enabling Proxmox confirmation rules in the active homelab MCP config
 - confirming pending confirmations appeared in the portal UI
 - confirming the second-step execution succeeded through `confirm_operation`
+- confirming that destructive MCP replies no longer rely on plain-text `confirm ...` loops
+- confirming that pre-confirmation text and the confirmation card appear in the intended order
+- confirming that worker summaries treat `confirmation_required` as pending, not executed
 
 ## Upstream Takeaway
 
