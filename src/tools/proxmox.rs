@@ -497,6 +497,7 @@ pub async fn vm_start(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn vm_stop(
     manager: Arc<ConnectionManager>,
     confirmation: Arc<ConfirmationManager>,
@@ -876,6 +877,7 @@ pub async fn vm_create_confirmed(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn vm_clone(
     manager: Arc<ConnectionManager>,
     host: Option<String>,
@@ -1016,6 +1018,7 @@ pub async fn vm_clone(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn vm_delete(
     manager: Arc<ConnectionManager>,
     confirmation: Arc<ConfirmationManager>,
@@ -1254,6 +1257,7 @@ pub async fn snapshot_list(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn snapshot_create(
     manager: Arc<ConnectionManager>,
     host: Option<String>,
@@ -1352,6 +1356,7 @@ pub async fn snapshot_create(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn snapshot_rollback(
     manager: Arc<ConnectionManager>,
     confirmation: Arc<ConfirmationManager>,

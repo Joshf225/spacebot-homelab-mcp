@@ -178,13 +178,13 @@ struct DockerImagePruneArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ProxmoxNodeListArgs {
-    /// Proxmox host name from config (defaults to first configured host)
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
     pub host: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ProxmoxNodeStatusArgs {
-    /// Proxmox host name from config (defaults to first configured host)
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
     pub host: Option<String>,
     /// Node name (defaults to the configured node or auto-detected)
     pub node: Option<String>,
@@ -192,7 +192,7 @@ struct ProxmoxNodeStatusArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ProxmoxVmListArgs {
-    /// Proxmox host name from config (defaults to first configured host)
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
     pub host: Option<String>,
     /// Node name (defaults to configured or auto-detected)
     pub node: Option<String>,
@@ -202,7 +202,7 @@ struct ProxmoxVmListArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ProxmoxVmStatusArgs {
-    /// Proxmox host name from config (defaults to first configured host)
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
     pub host: Option<String>,
     /// Node name (defaults to configured or auto-detected)
     pub node: Option<String>,
@@ -214,7 +214,7 @@ struct ProxmoxVmStatusArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ProxmoxVmStartArgs {
-    /// Proxmox host name from config
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
     pub host: Option<String>,
     /// Node name
     pub node: Option<String>,
@@ -228,7 +228,7 @@ struct ProxmoxVmStartArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ProxmoxVmStopArgs {
-    /// Proxmox host name from config
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
     pub host: Option<String>,
     /// Node name
     pub node: Option<String>,
@@ -242,7 +242,7 @@ struct ProxmoxVmStopArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ProxmoxVmCreateArgs {
-    /// Proxmox host name from config
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
     pub host: Option<String>,
     /// Node name
     pub node: Option<String>,
@@ -274,7 +274,7 @@ struct ProxmoxVmCreateArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ProxmoxVmCloneArgs {
-    /// Proxmox host name from config
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
     pub host: Option<String>,
     /// Node name
     pub node: Option<String>,
@@ -294,7 +294,7 @@ struct ProxmoxVmCloneArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ProxmoxVmDeleteArgs {
-    /// Proxmox host name from config
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
     pub host: Option<String>,
     /// Node name
     pub node: Option<String>,
@@ -310,7 +310,7 @@ struct ProxmoxVmDeleteArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ProxmoxSnapshotListArgs {
-    /// Proxmox host name from config
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
     pub host: Option<String>,
     /// Node name
     pub node: Option<String>,
@@ -322,7 +322,7 @@ struct ProxmoxSnapshotListArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ProxmoxSnapshotCreateArgs {
-    /// Proxmox host name from config
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
     pub host: Option<String>,
     /// Node name
     pub node: Option<String>,
@@ -342,7 +342,7 @@ struct ProxmoxSnapshotCreateArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ProxmoxSnapshotRollbackArgs {
-    /// Proxmox host name from config
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
     pub host: Option<String>,
     /// Node name
     pub node: Option<String>,

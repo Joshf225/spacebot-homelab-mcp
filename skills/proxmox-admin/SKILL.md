@@ -40,7 +40,7 @@ This skill depends on the following Spacebot MCP tools:
 | `proxmox.vm.list` | List VMs/CTs on a node (filter by qemu/lxc) | No |
 | `proxmox.vm.status` | Detailed VM/CT status (CPU, memory, disk, network I/O) | No |
 | `proxmox.vm.start` | Start a VM/CT | No |
-| `proxmox.vm.stop` | Graceful shutdown of a VM/CT | Yes |
+| `proxmox.vm.stop` | Immediate (force) stop of a VM/CT; does not attempt graceful shutdown | Yes |
 | `proxmox.vm.create` | Create a new VM/CT | Yes |
 | `proxmox.vm.clone` | Clone a VM from a template or existing VM | No |
 | `proxmox.vm.delete` | Permanently delete a VM/CT | Yes |

@@ -425,6 +425,7 @@ impl Config {
             }
 
             host.token_secret = resolve_env_var(&host.token_secret);
+            host.token_secret = host.token_secret.trim().to_string();
             if host.token_secret.is_empty() || is_unresolved_env_var_reference(&host.token_secret) {
                 return Err(anyhow!(
                     "Proxmox host '{}' token_secret cannot be empty",
@@ -811,6 +812,27 @@ mod tests {
             url = "https://192.168.1.10:8006"
             token_id = "root@pam!test"
             token_secret = "${SPACEBOT_TEST_MISSING_PVE_SECRET}"
+        "#;
+
+        let mut config: Config = toml::from_str(toml_str).unwrap();
+        let result = config.validate();
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("token_secret cannot be empty")
+        );
+    }
+
+    #[test]
+    fn test_proxmox_config_rejects_whitespace_token_secret() {
+        let toml_str = r#"
+            [proxmox.hosts.bad]
+            url = "https://192.168.1.10:8006"
+            token_id = "root@pam!test"
+            token_secret = "   "
         "#;
 
         let mut config: Config = toml::from_str(toml_str).unwrap();

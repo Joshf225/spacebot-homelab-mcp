@@ -129,15 +129,15 @@ Set `full=true` for full clone (default), `full=false` for linked clone.
 
 ## Stopping a VM/CT
 
-```
+```text
 proxmox.vm.stop (host=<PVE_HOST>, vmid=<VMID>, dry_run=true)
 proxmox.vm.stop (host=<PVE_HOST>, vmid=<VMID>)
 confirm_operation (token=<returned_token>, tool_name="proxmox.vm.stop")
 ```
 
-This performs a graceful shutdown (ACPI shutdown signal for QEMU, `shutdown` for LXC). The VM's guest OS should handle the signal and shut down cleanly.
+`proxmox.vm.stop` performs an immediate force-stop. The `dry_run=true` call previews that same force-stop without executing it. This does not send an ACPI or graceful shutdown signal; it halts the QEMU VM or LXC container immediately once confirmed.
 
-If the VM doesn't respond to graceful shutdown (hung guest), use SSH to force-stop:
+If you need to verify the equivalent host-level commands over SSH, they are the same class of force-stop operation:
 ```bash
 qm stop <VMID>   # Force-stop QEMU VM
 pct stop <VMID>   # Force-stop LXC container
