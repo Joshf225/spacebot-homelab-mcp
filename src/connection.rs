@@ -8,13 +8,14 @@ use tokio::sync::{Mutex, Notify};
 use tokio::time::{Duration, interval, sleep, timeout};
 use tracing::{debug, info, warn};
 
-use crate::config::{Config, DockerHost, SshHost, SshPoolConfig};
+use crate::config::{Config, DockerHost, ProxmoxHost, SshHost, SshPoolConfig};
 
-/// Manages persistent connections to Docker daemons and SSH hosts.
+/// Manages persistent connections to Docker daemons, SSH hosts, and Proxmox VE hosts.
 pub struct ConnectionManager {
     pub config: Arc<Config>,
     docker_clients: DashMap<String, DockerClient>,
     ssh_pools: DashMap<String, SshPool>,
+    proxmox_clients: DashMap<String, ProxmoxClient>,
     health: DashMap<String, ConnectionHealth>,
     metrics: Option<Arc<crate::metrics::Metrics>>,
 }
@@ -205,6 +206,206 @@ impl DockerClient {
             }
             DockerTransport::NamedPipe { path } => format!("named pipe {}", path),
         }
+    }
+}
+
+/// Proxmox VE API client wrapper.
+#[derive(Clone)]
+pub struct ProxmoxClient {
+    client: reqwest::Client,
+    base_url: String,
+    auth_header: String,
+    node: Option<String>,
+}
+
+impl ProxmoxClient {
+    pub fn new(host: &ProxmoxHost) -> Result<Self> {
+        let client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(!host.verify_tls)
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|error| anyhow!("Failed to build Proxmox HTTP client: {}", error))?;
+
+        let base_url = host.url.trim_end_matches('/').to_string();
+        let auth_header = format!("PVEAPIToken={}={}", host.token_id, host.token_secret);
+
+        Ok(Self {
+            client,
+            base_url,
+            auth_header,
+            node: host.node.clone(),
+        })
+    }
+
+    /// GET request to the Proxmox API. Returns the `data` field from the response envelope.
+    pub async fn get(&self, path: &str) -> Result<serde_json::Value> {
+        let url = format!("{}/api2/json{}", self.base_url, path);
+        let response = self
+            .client
+            .get(&url)
+            .header("Authorization", &self.auth_header)
+            .send()
+            .await
+            .map_err(|error| anyhow!("Proxmox API request failed: {}", error))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "Proxmox API error (HTTP {}): {}",
+                status.as_u16(),
+                body
+            ));
+        }
+
+        let body: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|error| anyhow!("Failed to parse Proxmox API response: {}", error))?;
+
+        Ok(body.get("data").cloned().unwrap_or(serde_json::Value::Null))
+    }
+
+    /// POST request to the Proxmox API (form-urlencoded body).
+    pub async fn post(&self, path: &str, params: &[(&str, &str)]) -> Result<serde_json::Value> {
+        let url = format!("{}/api2/json{}", self.base_url, path);
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", &self.auth_header)
+            .form(params)
+            .send()
+            .await
+            .map_err(|error| anyhow!("Proxmox API POST failed: {}", error))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "Proxmox API error (HTTP {}): {}",
+                status.as_u16(),
+                body
+            ));
+        }
+
+        let body: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|error| anyhow!("Failed to parse Proxmox API response: {}", error))?;
+
+        Ok(body.get("data").cloned().unwrap_or(serde_json::Value::Null))
+    }
+
+    /// DELETE request to the Proxmox API.
+    pub async fn delete(&self, path: &str) -> Result<serde_json::Value> {
+        let url = format!("{}/api2/json{}", self.base_url, path);
+        let response = self
+            .client
+            .delete(&url)
+            .header("Authorization", &self.auth_header)
+            .send()
+            .await
+            .map_err(|error| anyhow!("Proxmox API DELETE failed: {}", error))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "Proxmox API error (HTTP {}): {}",
+                status.as_u16(),
+                body
+            ));
+        }
+
+        let body: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|error| anyhow!("Failed to parse Proxmox API response: {}", error))?;
+
+        Ok(body.get("data").cloned().unwrap_or(serde_json::Value::Null))
+    }
+
+    /// Wait for a Proxmox async task (UPID) to complete.
+    pub async fn wait_for_task(
+        &self,
+        node: &str,
+        upid: &str,
+        max_wait_secs: u64,
+    ) -> Result<String> {
+        let start = Instant::now();
+        let max_duration = Duration::from_secs(max_wait_secs);
+        let poll_interval = Duration::from_secs(2);
+
+        loop {
+            let status = self
+                .get(&format!("/nodes/{}/tasks/{}/status", node, upid))
+                .await?;
+            let task_status = status
+                .get("status")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown");
+
+            if task_status == "stopped" {
+                let exit_status = status
+                    .get("exitstatus")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown");
+                if exit_status == "OK" {
+                    return Ok(format!("Task completed successfully (UPID: {})", upid));
+                }
+
+                return Err(anyhow!(
+                    "Proxmox task failed with exit status '{}' (UPID: {})",
+                    exit_status,
+                    upid
+                ));
+            }
+
+            if start.elapsed() > max_duration {
+                return Err(anyhow!(
+                    "Proxmox task timed out after {}s (UPID: {}). Task may still be running.",
+                    max_wait_secs,
+                    upid
+                ));
+            }
+
+            sleep(poll_interval).await;
+        }
+    }
+
+    /// Validate connectivity by calling GET /version.
+    pub async fn validate(&self) -> Result<()> {
+        self.get("/version").await?;
+        Ok(())
+    }
+
+    /// Get the configured node name, or auto-detect the first node from the cluster.
+    pub async fn resolve_node(&self, override_node: Option<&str>) -> Result<String> {
+        if let Some(node) = override_node {
+            return Ok(node.to_string());
+        }
+        if let Some(node) = &self.node {
+            return Ok(node.clone());
+        }
+
+        let nodes = self.get("/nodes").await?;
+        nodes
+            .as_array()
+            .and_then(|items| items.first())
+            .and_then(|node| node.get("node"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string())
+            .ok_or_else(|| {
+                anyhow!("Could not auto-detect Proxmox node name. Set 'node' in config.")
+            })
+    }
+
+    pub fn connection_summary(&self) -> String {
+        format!(
+            "{} (node: {})",
+            self.base_url,
+            self.node.as_deref().unwrap_or("auto")
+        )
     }
 }
 
@@ -628,6 +829,7 @@ impl ConnectionManager {
             config: Arc::new(config),
             docker_clients: DashMap::new(),
             ssh_pools: DashMap::new(),
+            proxmox_clients: DashMap::new(),
             health: DashMap::new(),
             metrics,
         };
@@ -703,10 +905,58 @@ impl ConnectionManager {
             info!("SSH pool '{}' initialized (connectivity pending)", name);
         }
 
+        for (name, host) in &manager.config.proxmox.hosts {
+            let health_key = format!("proxmox:{}", name);
+            manager.health.insert(
+                health_key.clone(),
+                ConnectionHealth {
+                    status: ConnectionStatus::Connecting,
+                    last_success: None,
+                    last_error: None,
+                    consecutive_failures: 0,
+                    skip_cycles: 0,
+                    cycles_skipped: 0,
+                },
+            );
+
+            match ProxmoxClient::new(host) {
+                Ok(client) => {
+                    let validate_result = client.validate().await;
+                    manager.proxmox_clients.insert(name.clone(), client.clone());
+
+                    match validate_result {
+                        Ok(()) => {
+                            manager.mark_healthy(&health_key);
+                            info!(
+                                "Proxmox '{}' connected via {}",
+                                name,
+                                client.connection_summary()
+                            );
+                        }
+                        Err(error) => {
+                            manager.mark_unhealthy(&health_key, error.to_string());
+                            warn!(
+                                "Proxmox '{}' API check failed during startup (will retry): {}",
+                                name, error
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    manager.mark_unhealthy(&health_key, error.to_string());
+                    warn!(
+                        "Failed to initialize Proxmox client for '{}': {}",
+                        name, error
+                    );
+                }
+            }
+        }
+
         info!(
-            "ConnectionManager initialized with {} Docker hosts and {} SSH hosts",
+            "ConnectionManager initialized with {} Docker hosts, {} SSH hosts, {} Proxmox hosts",
             manager.config.docker.hosts.len(),
-            manager.config.ssh.hosts.len()
+            manager.config.ssh.hosts.len(),
+            manager.config.proxmox.hosts.len()
         );
 
         Ok(manager)
@@ -728,6 +978,20 @@ impl ConnectionManager {
             .get(name)
             .map(|entry| entry.clone())
             .ok_or_else(|| anyhow!("Docker host '{}' not configured", name))
+    }
+
+    pub fn get_proxmox(&self, name: &str) -> Result<ProxmoxClient> {
+        let health_key = format!("proxmox:{}", name);
+        if let Some(health) = self.health.get(&health_key) {
+            if health.status == ConnectionStatus::Disconnected {
+                return Err(anyhow!(self.disconnected_error_message(&health_key, name)));
+            }
+        }
+
+        self.proxmox_clients
+            .get(name)
+            .map(|entry| entry.clone())
+            .ok_or_else(|| anyhow!("Proxmox host '{}' not configured", name))
     }
 
     pub async fn ssh_acquire_channel(&self, host: &str) -> Result<AcquiredChannel> {
@@ -932,6 +1196,49 @@ impl ConnectionManager {
                         metrics.ssh_pool_idle.with_label_values(&[&name]).set(idle);
                     }
                 }
+
+                let proxmox_clients: Vec<(String, ProxmoxClient)> = manager
+                    .proxmox_clients
+                    .iter()
+                    .map(|entry| (entry.key().clone(), entry.value().clone()))
+                    .collect();
+                for (name, client) in proxmox_clients {
+                    let health_key = format!("proxmox:{}", name);
+                    if manager.should_skip_health_check(&health_key) {
+                        continue;
+                    }
+
+                    match client.validate().await {
+                        Ok(()) => {
+                            if manager.mark_healthy(&health_key) {
+                                info!("Proxmox '{}' recovered", name);
+                            }
+                        }
+                        Err(error) => {
+                            let failures = manager.mark_unhealthy(&health_key, error.to_string());
+                            warn!(
+                                "Proxmox '{}' unhealthy ({} consecutive failures): {}",
+                                name, failures, error
+                            );
+                        }
+                    }
+                    if let Some(ref metrics) = manager.metrics {
+                        let value = if manager
+                            .health
+                            .get(&health_key)
+                            .map(|health| health.status == ConnectionStatus::Connected)
+                            .unwrap_or(false)
+                        {
+                            1
+                        } else {
+                            0
+                        };
+                        metrics
+                            .proxmox_health
+                            .with_label_values(&[&name])
+                            .set(value);
+                    }
+                }
             }
         })
     }
@@ -992,6 +1299,7 @@ mod tests {
             config: Arc::new(Config {
                 docker: Default::default(),
                 ssh: Default::default(),
+                proxmox: Default::default(),
                 audit: Default::default(),
                 rate_limits: Default::default(),
                 tools: Default::default(),
@@ -1000,6 +1308,7 @@ mod tests {
             }),
             docker_clients: DashMap::new(),
             ssh_pools: DashMap::new(),
+            proxmox_clients: DashMap::new(),
             health: DashMap::new(),
             metrics: None,
         };

@@ -2,6 +2,8 @@
 pub mod docker;
 /// Docker image tools
 pub mod docker_image;
+/// Proxmox VE tools
+pub mod proxmox;
 /// SSH tools
 pub mod ssh;
 /// Audit verification tool

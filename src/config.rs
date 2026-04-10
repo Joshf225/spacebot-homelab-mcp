@@ -14,6 +14,8 @@ pub struct Config {
     #[serde(default)]
     pub ssh: SshConfig,
     #[serde(default)]
+    pub proxmox: ProxmoxConfig,
+    #[serde(default)]
     pub audit: AuditConfig,
     #[serde(default)]
     pub rate_limits: RateLimitConfig,
@@ -256,6 +258,49 @@ fn default_metrics_listen() -> String {
     "127.0.0.1:9090".to_string()
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ProxmoxConfig {
+    #[serde(default)]
+    pub hosts: HashMap<String, ProxmoxHost>,
+}
+
+impl ProxmoxConfig {
+    pub fn len(&self) -> usize {
+        self.hosts.len()
+    }
+}
+
+#[derive(Clone, Deserialize)]
+pub struct ProxmoxHost {
+    /// Proxmox VE API URL (e.g., "https://192.168.1.10:8006")
+    pub url: String,
+    /// API token user + token name (e.g., "root@pam!spacebot")
+    pub token_id: String,
+    /// API token secret
+    pub token_secret: String,
+    /// Node name for this host (e.g., "pve1"). If omitted, auto-detected from /nodes.
+    pub node: Option<String>,
+    /// Accept self-signed TLS certificates (default: false for homelab use).
+    #[serde(default = "default_verify_tls_false")]
+    pub verify_tls: bool,
+}
+
+fn default_verify_tls_false() -> bool {
+    false
+}
+
+impl std::fmt::Debug for ProxmoxHost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProxmoxHost")
+            .field("url", &self.url)
+            .field("token_id", &self.token_id)
+            .field("token_secret", &"<redacted>")
+            .field("node", &self.node)
+            .field("verify_tls", &self.verify_tls)
+            .finish()
+    }
+}
+
 impl Config {
     /// Load configuration from a TOML file.
     pub fn load(path: Option<PathBuf>) -> Result<Self> {
@@ -282,9 +327,10 @@ impl Config {
         config.validate()?;
 
         info!(
-            "Configuration loaded successfully: {} Docker hosts, {} SSH hosts",
+            "Configuration loaded successfully: {} Docker hosts, {} SSH hosts, {} Proxmox hosts",
             config.docker.hosts.len(),
-            config.ssh.hosts.len()
+            config.ssh.hosts.len(),
+            config.proxmox.hosts.len()
         );
 
         Ok(config)
@@ -342,6 +388,27 @@ impl Config {
             // Resolve env var references in passphrase (e.g. "$SSH_KEY_PASS" or "${SSH_KEY_PASS}")
             if let Some(passphrase) = &host.private_key_passphrase {
                 host.private_key_passphrase = Some(resolve_env_var(passphrase));
+            }
+        }
+
+        for (name, host) in &mut self.proxmox.hosts {
+            if !host.url.starts_with("https://") && !host.url.starts_with("http://") {
+                return Err(anyhow!(
+                    "Proxmox host '{}' URL must start with https:// or http://. Got: '{}'",
+                    name,
+                    host.url
+                ));
+            }
+            if host.token_id.is_empty() {
+                return Err(anyhow!("Proxmox host '{}' token_id cannot be empty", name));
+            }
+
+            host.token_secret = resolve_env_var(&host.token_secret);
+            if host.token_secret.is_empty() {
+                return Err(anyhow!(
+                    "Proxmox host '{}' token_secret cannot be empty",
+                    name
+                ));
             }
         }
 
@@ -640,5 +707,24 @@ mod tests {
         std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
         let result = check_config_permissions(tmp.path());
         assert!(result.is_ok(), "0600 should be accepted, got: {:?}", result);
+    }
+
+    #[test]
+    fn test_proxmox_config_validation() {
+        let toml_str = r#"
+            [proxmox.hosts.bad]
+            url = "not-a-url"
+            token_id = "root@pam!test"
+            token_secret = "fake-uuid"
+        "#;
+        let mut config: Config = toml::from_str(toml_str).unwrap();
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("URL must start with")
+        );
     }
 }
