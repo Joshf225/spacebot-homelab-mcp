@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -280,6 +280,12 @@ pub struct ProxmoxHost {
     /// Local wait budget for async Proxmox tasks before returning the task UPID.
     #[serde(default = "default_proxmox_task_wait_timeout_secs")]
     pub task_wait_timeout_secs: u64,
+    /// Retry count for auto-assigned VMID conflicts when /cluster/nextid races.
+    #[serde(default = "default_proxmox_next_vmid_retry_attempts")]
+    pub next_vmid_retry_attempts: usize,
+    /// Backoff between auto-assigned VMID conflict retries.
+    #[serde(default = "default_proxmox_next_vmid_retry_backoff_ms")]
+    pub next_vmid_retry_backoff_ms: u64,
 }
 
 fn default_verify_tls_true() -> bool {
@@ -288,6 +294,14 @@ fn default_verify_tls_true() -> bool {
 
 fn default_proxmox_task_wait_timeout_secs() -> u64 {
     600
+}
+
+fn default_proxmox_next_vmid_retry_attempts() -> usize {
+    3
+}
+
+fn default_proxmox_next_vmid_retry_backoff_ms() -> u64 {
+    250
 }
 
 impl std::fmt::Debug for ProxmoxHost {
@@ -299,6 +313,11 @@ impl std::fmt::Debug for ProxmoxHost {
             .field("node", &self.node)
             .field("verify_tls", &self.verify_tls)
             .field("task_wait_timeout_secs", &self.task_wait_timeout_secs)
+            .field("next_vmid_retry_attempts", &self.next_vmid_retry_attempts)
+            .field(
+                "next_vmid_retry_backoff_ms",
+                &self.next_vmid_retry_backoff_ms,
+            )
             .finish()
     }
 }
@@ -674,6 +693,8 @@ mod tests {
 
         assert!(host.verify_tls);
         assert_eq!(host.task_wait_timeout_secs, 600);
+        assert_eq!(host.next_vmid_retry_attempts, 3);
+        assert_eq!(host.next_vmid_retry_backoff_ms, 250);
     }
 
     #[test]
@@ -752,10 +773,12 @@ mod tests {
         let mut config: Config = toml::from_str(toml_str).unwrap();
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("URL must start with"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("URL must start with")
+        );
     }
 
     #[test]
@@ -771,10 +794,12 @@ mod tests {
         let result = config.validate();
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("must start with https://"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("must start with https://")
+        );
     }
 
     #[test]
@@ -792,9 +817,11 @@ mod tests {
         let result = config.validate();
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("token_secret cannot be empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("token_secret cannot be empty")
+        );
     }
 }

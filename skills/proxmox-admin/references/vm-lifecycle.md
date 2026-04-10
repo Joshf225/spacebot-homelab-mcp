@@ -26,17 +26,17 @@ Use this when no suitable template exists.
 
 4. **Preview the creation:**
    ```
-   proxmox.vm.create (
-     host=<PVE_HOST>,
-     vmid=<VMID>,
-     vm_type="qemu",
-     name="my-new-vm",
-     cores=2,
-     memory=2048,
-     ostype="l26",
-     iso="local:iso/ubuntu-24.04.iso",
-     storage="local-lvm",
-     disk_size="32G",
+    proxmox.vm.create (
+      host=<PVE_HOST>,
+      vmid=<VMID>,
+      vm_type="qemu",
+      name="my-new-vm",
+      cores=2,
+      memory=2048,
+      os_type="l26",
+      iso="local:iso/ubuntu-24.04.iso",
+      storage="local-lvm",
+      disk_size="32G",
      net="virtio,bridge=vmbr0",
      dry_run=true
    )
@@ -64,22 +64,22 @@ Use this when no suitable template exists.
 
 2. **Create the container:**
    ```
-   proxmox.vm.create (
-     host=<PVE_HOST>,
-     vmid=<VMID>,
-     vm_type="lxc",
-     name="my-container",
-     cores=1,
-     memory=512,
-     ostype="local:vztmpl/ubuntu-24.04-standard_24.04-1_amd64.tar.zst",
-     storage="local-lvm",
-     disk_size="8",
-     net="name=eth0,bridge=vmbr0,ip=dhcp",
-     dry_run=true
-   )
-   ```
+    proxmox.vm.create (
+      host=<PVE_HOST>,
+      vmid=<VMID>,
+      vm_type="lxc",
+      name="my-container",
+      cores=1,
+      memory=512,
+      template="local:vztmpl/ubuntu-24.04-standard_24.04-1_amd64.tar.zst",
+      storage="local-lvm",
+      disk_size="8",
+      net="name=eth0,bridge=vmbr0,ip=dhcp",
+      dry_run=true
+    )
+    ```
 
-   Note: for LXC, `ostype` is the OS template path (not an ISO), `disk_size` is in GB (no suffix), and `net` uses LXC-specific format.
+    Note: for QEMU, use `os_type` for the kernel/guest OS identifier. For LXC, use `template` for the OS template path (not an ISO). `disk_size` is in GB (no suffix), and `net` uses LXC-specific format.
 
 3. Execute, start, and verify as above.
 

@@ -256,8 +256,10 @@ struct ProxmoxVmCreateArgs {
     pub cores: Option<u64>,
     /// Memory in MB
     pub memory: Option<u64>,
-    /// OS type for QEMU (e.g. "l26" for Linux) or template path for LXC
-    pub ostype: Option<String>,
+    /// QEMU OS type identifier (e.g. "l26" for Linux)
+    pub os_type: Option<String>,
+    /// LXC template path (e.g. "local:vztmpl/ubuntu-24.04-standard_24.04-1_amd64.tar.zst")
+    pub template: Option<String>,
     /// ISO image for QEMU (e.g. "local:iso/ubuntu-22.04.iso")
     pub iso: Option<String>,
     /// Storage pool for disk (e.g. "local-lvm")
@@ -978,7 +980,7 @@ impl HomelabMcpServer {
 
     #[tool(
         name = "proxmox.vm.stop",
-        description = "Stop (graceful shutdown) a Proxmox VM or LXC container. When confirmation is configured, this is a TWO-STEP operation: (1) Call this tool and get a confirmation token. (2) Call confirm_operation to execute.",
+        description = "Force-stop a Proxmox VM or LXC container immediately. When confirmation is configured, this is a TWO-STEP operation: (1) Call this tool and get a confirmation token. (2) Call confirm_operation with that token and tool_name=\"proxmox.vm.stop\" to execute.",
         annotations(destructive_hint = true)
     )]
     async fn proxmox_vm_stop(
@@ -1005,7 +1007,7 @@ impl HomelabMcpServer {
 
     #[tool(
         name = "proxmox.vm.create",
-        description = "Create a new Proxmox VM or LXC container. Use dry_run=true to preview. This is a TWO-STEP operation when confirmation is configured.",
+        description = "Create a new Proxmox VM or LXC container. Use dry_run=true to preview. When confirmation is configured, this is a TWO-STEP operation: (1) Call this tool and get a confirmation token. (2) Call confirm_operation with that token and tool_name=\"proxmox.vm.create\" to execute.",
         annotations(destructive_hint = true)
     )]
     async fn proxmox_vm_create(
@@ -1024,7 +1026,8 @@ impl HomelabMcpServer {
             args.name,
             args.cores,
             args.memory,
-            args.ostype,
+            args.os_type,
+            args.template,
             args.iso,
             args.storage,
             args.disk_size,
@@ -1069,7 +1072,7 @@ impl HomelabMcpServer {
 
     #[tool(
         name = "proxmox.vm.delete",
-        description = "PERMANENTLY delete a Proxmox VM or LXC container. Use dry_run=true first. This is a TWO-STEP operation: (1) Returns a confirmation token. (2) Call confirm_operation to execute.",
+        description = "PERMANENTLY delete a Proxmox VM or LXC container. Use dry_run=true first. This is a TWO-STEP operation: (1) Returns a confirmation token. (2) Call confirm_operation with that token and tool_name=\"proxmox.vm.delete\" to execute.",
         annotations(destructive_hint = true)
     )]
     async fn proxmox_vm_delete(
@@ -1151,7 +1154,7 @@ impl HomelabMcpServer {
 
     #[tool(
         name = "proxmox.vm.snapshot.rollback",
-        description = "Rollback a Proxmox VM or LXC container to a previous snapshot. WARNING: Current state will be lost. This is a TWO-STEP operation when confirmation is configured.",
+        description = "Rollback a Proxmox VM or LXC container to a previous snapshot. WARNING: Current state will be lost. When confirmation is configured, this is a TWO-STEP operation: (1) Call this tool and get a confirmation token. (2) Call confirm_operation with that token and tool_name=\"proxmox.vm.snapshot.rollback\" to execute.",
         annotations(destructive_hint = true)
     )]
     async fn proxmox_snapshot_rollback(
@@ -1504,7 +1507,8 @@ impl HomelabMcpServer {
                     params.name,
                     params.cores,
                     params.memory,
-                    params.ostype,
+                    params.os_type,
+                    params.template,
                     params.iso,
                     params.storage,
                     params.disk_size,

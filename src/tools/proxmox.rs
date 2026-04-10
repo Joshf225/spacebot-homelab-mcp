@@ -1,6 +1,8 @@
 use anyhow::{Result, anyhow};
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::sleep;
 
 use crate::audit::AuditLogger;
 use crate::confirmation::ConfirmationManager;
@@ -9,6 +11,12 @@ use crate::tools::{truncate_output, wrap_output_envelope};
 
 const OUTPUT_MAX_CHARS: usize = 10_000;
 const DEFAULT_TASK_WAIT_TIMEOUT_SECS: u64 = 600;
+
+#[derive(Clone, Copy)]
+struct AutoVmidRetryPolicy {
+    attempts: usize,
+    backoff_ms: u64,
+}
 
 pub async fn node_list(
     manager: Arc<ConnectionManager>,
@@ -506,7 +514,7 @@ pub async fn vm_stop(
 
     if dry_run.unwrap_or(false) {
         let output = format!(
-            "DRY RUN: Would stop {} {} on Proxmox host '{}'.",
+            "DRY RUN: Would force-stop {} {} on Proxmox host '{}'.",
             vm_type, vmid, host
         );
         audit
@@ -529,7 +537,7 @@ pub async fn vm_stop(
             "proxmox.vm.stop",
             None,
             &format!(
-                "About to STOP {} {} on Proxmox host '{}'. The VM/CT will be shut down.",
+                "About to FORCE-STOP {} {} on Proxmox host '{}'. The VM/CT will be stopped immediately.",
                 vm_type, vmid, host
             ),
             &params_json,
@@ -563,7 +571,7 @@ pub async fn vm_stop_confirmed(
         let client = manager.get_proxmox(&host)?;
         let node_name = client.resolve_node(node.as_deref()).await?;
         let vm_type = resolved_vm_type(vm_type.as_deref())?;
-        let path = format!("/nodes/{}/{}/{}/status/shutdown", node_name, vm_type, vmid);
+        let path = format!("/nodes/{}/{}/{}/status/stop", node_name, vm_type, vmid);
         let response = client.post(&path, &[]).await?;
 
         if let Some(upid) = response.as_str() {
@@ -571,12 +579,12 @@ pub async fn vm_stop_confirmed(
                 .wait_for_task(&node_name, upid, task_wait_timeout_secs(&manager, &host))
                 .await?;
             Ok(format!(
-                "Stopped {} {} on node '{}'. {}",
+                "Force-stopped {} {} on node '{}'. {}",
                 vm_type, vmid, node_name, result
             ))
         } else {
             Ok(format!(
-                "Stop requested for {} {} on node '{}'.",
+                "Force-stop requested for {} {} on node '{}'.",
                 vm_type, vmid, node_name
             ))
         }
@@ -612,7 +620,8 @@ pub async fn vm_create(
     name: Option<String>,
     cores: Option<u64>,
     memory: Option<u64>,
-    ostype: Option<String>,
+    os_type: Option<String>,
+    template: Option<String>,
     iso: Option<String>,
     storage: Option<String>,
     disk_size: Option<String>,
@@ -624,6 +633,7 @@ pub async fn vm_create(
     let vm_type = vm_type.unwrap_or_else(|| "qemu".to_string());
 
     ensure_vm_type(&vm_type)?;
+    validate_vm_create_platform_inputs(&vm_type, os_type.as_deref(), template.as_deref())?;
 
     let mut param_lines = vec![format!("Type: {}", vm_type)];
     if let Some(vmid) = vmid {
@@ -638,8 +648,12 @@ pub async fn vm_create(
     if let Some(memory) = memory {
         param_lines.push(format!("Memory: {} MB", memory));
     }
-    if let Some(ostype) = &ostype {
-        param_lines.push(format!("OS Type: {}", ostype));
+    if vm_type == "qemu" {
+        if let Some(os_type) = &os_type {
+            param_lines.push(format!("OS Type: {}", os_type));
+        }
+    } else if let Some(template) = &template {
+        param_lines.push(format!("Template: {}", template));
     }
     if let Some(iso) = &iso {
         param_lines.push(format!("ISO: {}", iso));
@@ -676,7 +690,8 @@ pub async fn vm_create(
         "name": name.clone(),
         "cores": cores,
         "memory": memory,
-        "ostype": ostype.clone(),
+        "os_type": os_type.clone(),
+        "template": template.clone(),
         "iso": iso.clone(),
         "storage": storage.clone(),
         "disk_size": disk_size.clone(),
@@ -711,8 +726,8 @@ pub async fn vm_create(
     }
 
     vm_create_confirmed(
-        manager, host, node, vmid, vm_type, name, cores, memory, ostype, iso, storage, disk_size,
-        net, audit,
+        manager, host, node, vmid, vm_type, name, cores, memory, os_type, template, iso, storage,
+        disk_size, net, audit,
     )
     .await
 }
@@ -727,7 +742,8 @@ pub async fn vm_create_confirmed(
     name: Option<String>,
     cores: Option<u64>,
     memory: Option<u64>,
-    ostype: Option<String>,
+    os_type: Option<String>,
+    template: Option<String>,
     iso: Option<String>,
     storage: Option<String>,
     disk_size: Option<String>,
@@ -738,70 +754,101 @@ pub async fn vm_create_confirmed(
         let client = manager.get_proxmox(&host)?;
         let node_name = client.resolve_node(node.as_deref()).await?;
         let vm_type = resolved_vm_type(Some(&vm_type))?;
-        let vmid = match vmid {
+        validate_vm_create_platform_inputs(vm_type, os_type.as_deref(), template.as_deref())?;
+        let retry_policy = auto_vmid_retry_policy(&manager, &host);
+        let auto_vmid = vmid.is_none();
+        let mut vmid = match vmid {
             Some(vmid) => vmid,
             None => next_vmid(&client).await?,
         };
-
-        let mut params: Vec<(&str, String)> = vec![("vmid", vmid.to_string())];
-
-        if let Some(name) = &name {
-            params.push(("name", name.clone()));
-        }
-        if let Some(cores) = cores {
-            params.push(("cores", cores.to_string()));
-        }
-        if let Some(memory) = memory {
-            params.push(("memory", memory.to_string()));
-        }
-
-        if vm_type == "qemu" {
-            if let Some(ostype) = &ostype {
-                params.push(("ostype", ostype.clone()));
-            }
-            if let Some(iso) = &iso {
-                params.push(("ide2", format!("{},media=cdrom", iso)));
-            }
-            if let Some(storage) = &storage {
-                let size = disk_size.as_deref().unwrap_or("32G");
-                params.push(("scsi0", format!("{}:{}", storage, size)));
-            }
-            if let Some(net) = &net {
-                params.push(("net0", net.clone()));
-            }
-        } else {
-            if let Some(ostype) = &ostype {
-                params.push(("ostemplate", ostype.clone()));
-            }
-            if let Some(storage) = &storage {
-                let size = disk_size.as_deref().unwrap_or("8");
-                params.push(("rootfs", format!("{}:{}", storage, size)));
-            }
-            if let Some(net) = &net {
-                params.push(("net0", net.clone()));
-            }
-        }
-
-        let param_refs: Vec<(&str, &str)> = params
-            .iter()
-            .map(|(key, value)| (*key, value.as_str()))
-            .collect();
         let path = format!("/nodes/{}/{}", node_name, vm_type);
-        let response = client.post(&path, &param_refs).await?;
+        let mut conflict_retries = 0usize;
 
-        if let Some(upid) = response.as_str() {
-            let result = client
-                .wait_for_task(&node_name, upid, task_wait_timeout_secs(&manager, &host))
-                .await?;
-            Ok(format!(
-                "Created {} {} on node '{}'. {}",
-                vm_type, vmid, node_name, result
-            ))
-        } else {
-            Ok(format!(
-                "Created {} {} on node '{}'.",
-                vm_type, vmid, node_name
-            ))
+        loop {
+            let mut params: Vec<(&str, String)> = vec![("vmid", vmid.to_string())];
+
+            if let Some(name) = &name {
+                params.push(("name", name.clone()));
+            }
+            if let Some(cores) = cores {
+                params.push(("cores", cores.to_string()));
+            }
+            if let Some(memory) = memory {
+                params.push(("memory", memory.to_string()));
+            }
+
+            if vm_type == "qemu" {
+                if let Some(os_type) = &os_type {
+                    params.push(("ostype", os_type.clone()));
+                }
+                if let Some(iso) = &iso {
+                    params.push(("ide2", format!("{},media=cdrom", iso)));
+                }
+                if let Some(storage) = &storage {
+                    let size = disk_size.as_deref().unwrap_or("32G");
+                    params.push(("scsi0", format!("{}:{}", storage, size)));
+                }
+                if let Some(net) = &net {
+                    params.push(("net0", net.clone()));
+                }
+            } else {
+                if let Some(template) = &template {
+                    params.push(("ostemplate", template.clone()));
+                }
+                if let Some(storage) = &storage {
+                    let size = disk_size.as_deref().unwrap_or("8");
+                    params.push(("rootfs", format!("{}:{}", storage, size)));
+                }
+                if let Some(net) = &net {
+                    params.push(("net0", net.clone()));
+                }
+            }
+
+            let param_refs: Vec<(&str, &str)> = params
+                .iter()
+                .map(|(key, value)| (*key, value.as_str()))
+                .collect();
+
+            match client.post(&path, &param_refs).await {
+                Ok(response) => {
+                    break if let Some(upid) = response.as_str() {
+                        let result = client
+                            .wait_for_task(
+                                &node_name,
+                                upid,
+                                task_wait_timeout_secs(&manager, &host),
+                            )
+                            .await?;
+                        Ok(format!(
+                            "Created {} {} on node '{}'. {}",
+                            vm_type, vmid, node_name, result
+                        ))
+                    } else {
+                        Ok(format!(
+                            "Created {} {} on node '{}'.",
+                            vm_type, vmid, node_name
+                        ))
+                    };
+                }
+                Err(error)
+                    if auto_vmid
+                        && is_duplicate_vmid_conflict(&error, vmid)
+                        && conflict_retries < retry_policy.attempts =>
+                {
+                    conflict_retries += 1;
+                    sleep(Duration::from_millis(retry_policy.backoff_ms)).await;
+                    vmid = next_vmid(&client).await?;
+                }
+                Err(error) if auto_vmid && is_duplicate_vmid_conflict(&error, vmid) => {
+                    break Err(exhausted_auto_vmid_error(
+                        "proxmox.vm.create",
+                        "vmid",
+                        retry_policy,
+                        error,
+                    ));
+                }
+                Err(error) => break Err(error),
+            }
         }
     }
     .await;
@@ -870,48 +917,78 @@ pub async fn vm_clone(
     let result: Result<String> = async {
         let client = manager.get_proxmox(&host)?;
         let node_name = client.resolve_node(node.as_deref()).await?;
-        let newid = match newid {
+        let retry_policy = auto_vmid_retry_policy(&manager, &host);
+        let auto_newid = newid.is_none();
+        let mut newid = match newid {
             Some(newid) => newid,
             None => next_vmid(&client).await?,
         };
-
-        let mut params: Vec<(&str, String)> = vec![("newid", newid.to_string())];
-        if let Some(name) = &name {
-            params.push(("name", name.clone()));
-        }
-        if let Some(full) = full {
-            params.push(("full", bool_to_proxmox(full).to_string()));
-        }
-        if let Some(target_storage) = &target_storage {
-            params.push(("storage", target_storage.clone()));
-        }
-
-        let param_refs: Vec<(&str, &str)> = params
-            .iter()
-            .map(|(key, value)| (*key, value.as_str()))
-            .collect();
         let path = format!("/nodes/{}/qemu/{}/clone", node_name, vmid);
-        let response = client.post(&path, &param_refs).await?;
+        let mut conflict_retries = 0usize;
 
-        if let Some(upid) = response.as_str() {
-            let result = client
-                .wait_for_task(&node_name, upid, task_wait_timeout_secs(&manager, &host))
-                .await?;
-            Ok(format!(
-                "Cloned VM {} to {} on node '{}'. {}\n{}",
-                vmid,
-                newid,
-                node_name,
-                result,
-                name.as_ref()
-                    .map(|name| format!("Name: {}", name))
-                    .unwrap_or_default(),
-            ))
-        } else {
-            Ok(format!(
-                "Clone requested for VM {} to {} on node '{}'.",
-                vmid, newid, node_name
-            ))
+        loop {
+            let mut params: Vec<(&str, String)> = vec![("newid", newid.to_string())];
+            if let Some(name) = &name {
+                params.push(("name", name.clone()));
+            }
+            if let Some(full) = full {
+                params.push(("full", bool_to_proxmox(full).to_string()));
+            }
+            if let Some(target_storage) = &target_storage {
+                params.push(("storage", target_storage.clone()));
+            }
+
+            let param_refs: Vec<(&str, &str)> = params
+                .iter()
+                .map(|(key, value)| (*key, value.as_str()))
+                .collect();
+
+            match client.post(&path, &param_refs).await {
+                Ok(response) => {
+                    break if let Some(upid) = response.as_str() {
+                        let result = client
+                            .wait_for_task(
+                                &node_name,
+                                upid,
+                                task_wait_timeout_secs(&manager, &host),
+                            )
+                            .await?;
+                        Ok(format!(
+                            "Cloned VM {} to {} on node '{}'. {}\n{}",
+                            vmid,
+                            newid,
+                            node_name,
+                            result,
+                            name.as_ref()
+                                .map(|name| format!("Name: {}", name))
+                                .unwrap_or_default(),
+                        ))
+                    } else {
+                        Ok(format!(
+                            "Clone requested for VM {} to {} on node '{}'.",
+                            vmid, newid, node_name
+                        ))
+                    };
+                }
+                Err(error)
+                    if auto_newid
+                        && is_duplicate_vmid_conflict(&error, newid)
+                        && conflict_retries < retry_policy.attempts =>
+                {
+                    conflict_retries += 1;
+                    sleep(Duration::from_millis(retry_policy.backoff_ms)).await;
+                    newid = next_vmid(&client).await?;
+                }
+                Err(error) if auto_newid && is_duplicate_vmid_conflict(&error, newid) => {
+                    break Err(exhausted_auto_vmid_error(
+                        "proxmox.vm.clone",
+                        "newid",
+                        retry_policy,
+                        error,
+                    ));
+                }
+                Err(error) => break Err(error),
+            }
         }
     }
     .await;
@@ -1604,6 +1681,22 @@ fn task_wait_timeout_secs(manager: &ConnectionManager, host: &str) -> u64 {
         .unwrap_or(DEFAULT_TASK_WAIT_TIMEOUT_SECS)
 }
 
+fn auto_vmid_retry_policy(manager: &ConnectionManager, host: &str) -> AutoVmidRetryPolicy {
+    manager
+        .config()
+        .proxmox
+        .hosts
+        .get(host)
+        .map(|host| AutoVmidRetryPolicy {
+            attempts: host.next_vmid_retry_attempts,
+            backoff_ms: host.next_vmid_retry_backoff_ms,
+        })
+        .unwrap_or(AutoVmidRetryPolicy {
+            attempts: 3,
+            backoff_ms: 250,
+        })
+}
+
 fn ensure_vm_type(vm_type: &str) -> Result<()> {
     match vm_type {
         "qemu" | "lxc" => Ok(()),
@@ -1617,12 +1710,56 @@ fn resolved_vm_type(vm_type: Option<&str>) -> Result<&str> {
     Ok(vm_type)
 }
 
+fn validate_vm_create_platform_inputs(
+    vm_type: &str,
+    os_type: Option<&str>,
+    template: Option<&str>,
+) -> Result<()> {
+    match vm_type {
+        "qemu" if template.is_some() => {
+            Err(anyhow!("template is only valid when vm_type is 'lxc'"))
+        }
+        "lxc" if os_type.is_some() => Err(anyhow!("os_type is only valid when vm_type is 'qemu'")),
+        _ => Ok(()),
+    }
+}
+
 async fn next_vmid(client: &ProxmoxClient) -> Result<u64> {
     let next = client.get("/cluster/nextid").await?;
     next.as_str()
         .and_then(|value| value.parse::<u64>().ok())
         .or_else(|| next.as_u64())
         .ok_or_else(|| anyhow!("Failed to get next available VMID"))
+}
+
+fn is_duplicate_vmid_conflict(error: &anyhow::Error, vmid: u64) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    let vmid_text = vmid.to_string();
+    let mentions_conflict = message.contains("already exists")
+        || message.contains("already used")
+        || message.contains("already in use")
+        || message.contains("duplicate");
+    let mentions_vmid = message.contains(&format!("vm {}", vmid))
+        || message.contains(&format!("ct {}", vmid))
+        || (message.contains("vmid") && message.contains(&vmid_text));
+
+    mentions_conflict && mentions_vmid
+}
+
+fn exhausted_auto_vmid_error(
+    tool_name: &str,
+    field_name: &str,
+    retry_policy: AutoVmidRetryPolicy,
+    last_error: anyhow::Error,
+) -> anyhow::Error {
+    anyhow!(
+        "{} failed after {} auto-VMID conflict retries ({}ms backoff). Pass an explicit {} or increase next_vmid_retry_attempts/next_vmid_retry_backoff_ms. Last error: {}",
+        tool_name,
+        retry_policy.attempts,
+        retry_policy.backoff_ms,
+        field_name,
+        last_error,
+    )
 }
 
 fn bool_to_proxmox(value: bool) -> &'static str {
@@ -1691,5 +1828,88 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / KB as f64)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AutoVmidRetryPolicy, exhausted_auto_vmid_error, is_duplicate_vmid_conflict,
+        validate_vm_create_platform_inputs,
+    };
+
+    #[test]
+    fn qemu_accepts_os_type_without_template() {
+        assert!(validate_vm_create_platform_inputs("qemu", Some("l26"), None).is_ok());
+    }
+
+    #[test]
+    fn lxc_accepts_template_without_os_type() {
+        assert!(
+            validate_vm_create_platform_inputs(
+                "lxc",
+                None,
+                Some("local:vztmpl/ubuntu-24.04-standard_24.04-1_amd64.tar.zst")
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn qemu_rejects_lxc_template_field() {
+        let error =
+            validate_vm_create_platform_inputs("qemu", Some("l26"), Some("template")).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("template is only valid when vm_type is 'lxc'")
+        );
+    }
+
+    #[test]
+    fn lxc_rejects_qemu_os_type_field() {
+        let error =
+            validate_vm_create_platform_inputs("lxc", Some("l26"), Some("template")).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("os_type is only valid when vm_type is 'qemu'")
+        );
+    }
+
+    #[test]
+    fn detects_duplicate_vmid_conflict_error() {
+        let error = anyhow::anyhow!(
+            "Proxmox API error (HTTP 500): {{\"errors\":{{\"vmid\":\"VM 123 already exists\"}}}}"
+        );
+
+        assert!(is_duplicate_vmid_conflict(&error, 123));
+    }
+
+    #[test]
+    fn ignores_non_vmid_conflict_error() {
+        let error = anyhow::anyhow!(
+            "Proxmox API error (HTTP 500): {{\"errors\":{{\"name\":\"guest name already exists\"}}}}"
+        );
+
+        assert!(!is_duplicate_vmid_conflict(&error, 123));
+    }
+
+    #[test]
+    fn exhausted_auto_vmid_error_mentions_config_and_field() {
+        let error = exhausted_auto_vmid_error(
+            "proxmox.vm.create",
+            "vmid",
+            AutoVmidRetryPolicy {
+                attempts: 3,
+                backoff_ms: 250,
+            },
+            anyhow::anyhow!("VM 123 already exists"),
+        );
+
+        let message = error.to_string();
+        assert!(message.contains("proxmox.vm.create failed after 3 auto-VMID conflict retries"));
+        assert!(message.contains("Pass an explicit vmid"));
+        assert!(message.contains("next_vmid_retry_attempts/next_vmid_retry_backoff_ms"));
     }
 }

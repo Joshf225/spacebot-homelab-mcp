@@ -339,7 +339,7 @@ Check:
 Symptoms: connection refused or TLS handshake failure.
 
 Check:
-- `verify_tls = false` in config (default for homelab self-signed certs).
+- `verify_tls` defaults to `true` in `src/config.rs`; set `verify_tls = false` only as an explicit opt-out for trusted self-signed homelab environments, because it disables certificate verification and weakens transport security.
 - The Proxmox host is reachable on port 8006.
 - No firewall blocking the connection between Spacebot's host and the Proxmox host.
 

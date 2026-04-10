@@ -86,6 +86,8 @@ token_secret = "${PVE_TOKEN_SECRET}"
 node = "pve1"
 verify_tls = false
 task_wait_timeout_secs = 600
+next_vmid_retry_attempts = 3
+next_vmid_retry_backoff_ms = 250
 
 # SSH hosts
 [ssh.hosts.home]
