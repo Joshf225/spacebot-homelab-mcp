@@ -362,10 +362,9 @@ impl ProxmoxClient {
             }
 
             if start.elapsed() > max_duration {
-                return Err(anyhow!(
-                    "Proxmox task timed out after {}s (UPID: {}). Task may still be running.",
-                    max_wait_secs,
-                    upid
+                return Ok(format!(
+                    "Proxmox task is still running after the local wait budget of {}s (UPID: {}). Poll task status in Proxmox to continue tracking it.",
+                    max_wait_secs, upid
                 ));
             }
 
@@ -389,15 +388,7 @@ impl ProxmoxClient {
         }
 
         let nodes = self.get("/nodes").await?;
-        nodes
-            .as_array()
-            .and_then(|items| items.first())
-            .and_then(|node| node.get("node"))
-            .and_then(|value| value.as_str())
-            .map(|value| value.to_string())
-            .ok_or_else(|| {
-                anyhow!("Could not auto-detect Proxmox node name. Set 'node' in config.")
-            })
+        auto_detect_single_node_name(&nodes)
     }
 
     pub fn connection_summary(&self) -> String {
@@ -407,6 +398,38 @@ impl ProxmoxClient {
             self.node.as_deref().unwrap_or("auto")
         )
     }
+}
+
+fn auto_detect_single_node_name(nodes: &serde_json::Value) -> Result<String> {
+    let items = nodes
+        .as_array()
+        .ok_or_else(|| anyhow!("Could not auto-detect Proxmox node name. Set 'node' in config."))?;
+
+    if items.is_empty() {
+        return Err(anyhow!(
+            "Could not auto-detect Proxmox node name. Set 'node' in config."
+        ));
+    }
+
+    if items.len() > 1 {
+        let mut node_names = items
+            .iter()
+            .filter_map(|node| node.get("node").and_then(|value| value.as_str()))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        node_names.sort();
+
+        return Err(anyhow!(
+            "Multiple Proxmox nodes detected ({}). Set 'node' in config.",
+            node_names.join(", ")
+        ));
+    }
+
+    items[0]
+        .get("node")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("Could not auto-detect Proxmox node name. Set 'node' in config."))
 }
 
 /// SSH connection pool for a single host.
@@ -1328,5 +1351,29 @@ mod tests {
         let message = manager.disconnected_error_message("ssh:test", "test");
         assert!(message.contains("boom"));
         assert!(message.contains("test"));
+    }
+
+    #[test]
+    fn test_auto_detect_single_node_name_returns_only_node() {
+        let nodes = serde_json::json!([
+            { "node": "pve1" }
+        ]);
+
+        assert_eq!(auto_detect_single_node_name(&nodes).unwrap(), "pve1");
+    }
+
+    #[test]
+    fn test_auto_detect_single_node_name_rejects_multiple_nodes() {
+        let nodes = serde_json::json!([
+            { "node": "pve2" },
+            { "node": "pve1" }
+        ]);
+
+        let error = auto_detect_single_node_name(&nodes).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Multiple Proxmox nodes detected (pve1, pve2)")
+        );
     }
 }

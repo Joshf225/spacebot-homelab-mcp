@@ -17,7 +17,8 @@ url = "https://192.168.1.10:8006"
 token_id = "root@pam!spacebot"
 token_secret = "${PVE_TOKEN_SECRET}"  # Use env var for the API token secret
 node = "pve1"                          # Optional: node name (auto-detected if omitted)
-verify_tls = false                     # Accept self-signed certs (default: false)
+verify_tls = false                     # Accept self-signed certs (default: true)
+task_wait_timeout_secs = 600           # Optional: local wait budget before returning the task UPID
 
 # Multi-node cluster example
 # [proxmox.hosts.pve2]

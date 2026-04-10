@@ -4,7 +4,7 @@ Bridge setup, VLAN tagging, and common network patterns for Proxmox VE.
 
 ## Checking current network
 
-```
+```text
 proxmox.network.list (host=<PVE_HOST>)
 ```
 
@@ -37,7 +37,7 @@ The host's management IP is typically assigned to `vmbr0`, not the physical NIC.
 
 All VMs share one bridge, one subnet.
 
-```
+```text
 Physical NIC (eno1) <-> vmbr0 (10.0.1.0/24) <-> VMs
 ```
 
@@ -49,16 +49,16 @@ This is the simplest setup. All VMs are on the same L2 segment.
 
 One bridge handles multiple VLANs. The physical switch port must be configured as a trunk.
 
-```
+```text
 Physical NIC (eno1) <-> vmbr0 (VLAN-aware) <-> VMs with VLAN tags
 ```
 
 Configuration (in `/etc/network/interfaces`):
-```
+```ini
 auto vmbr0
 iface vmbr0 inet static
     address 10.0.1.1/24
-    gateway 10.0.1.1
+    gateway 10.0.1.254
     bridge-ports eno1
     bridge-stp off
     bridge-fd 0
@@ -76,7 +76,7 @@ VM NIC configs:
 
 Each VLAN gets its own bridge. More explicit, easier to reason about, but more config.
 
-```
+```text
 eno1.10 <-> vmbr1 (IoT VLAN 10)
 eno1.20 <-> vmbr2 (Media VLAN 20)
 eno1.50 <-> vmbr3 (Homelab VLAN 50)
@@ -88,7 +88,7 @@ VM NIC config: `virtio,bridge=vmbr1` (no tag needed, the bridge is already on th
 
 A bridge with no physical NIC attached. VMs on this bridge can only talk to each other.
 
-```
+```text
 vmbr99 (no bridge-ports) <-> VMs (isolated network)
 ```
 
@@ -116,7 +116,7 @@ pct config <VMID> | grep net
 ```
 
 Example output:
-```
+```text
 net0: virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0,tag=50
 ```
 
@@ -148,12 +148,12 @@ If the bridge's member port (physical NIC) is down, the bridge will be inactive.
 
 For redundancy or throughput, multiple NICs can be bonded:
 
-```
+```text
 bond0 (eno1 + eno2, LACP) <-> vmbr0 <-> VMs
 ```
 
 Configuration:
-```
+```ini
 auto bond0
 iface bond0 inet manual
     bond-slaves eno1 eno2
@@ -164,7 +164,7 @@ iface bond0 inet manual
 auto vmbr0
 iface vmbr0 inet static
     address 10.0.1.1/24
-    gateway 10.0.1.1
+    gateway 10.0.1.254
     bridge-ports bond0
     bridge-stp off
     bridge-fd 0

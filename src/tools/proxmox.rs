@@ -8,14 +8,14 @@ use crate::connection::{ConnectionManager, ProxmoxClient};
 use crate::tools::{truncate_output, wrap_output_envelope};
 
 const OUTPUT_MAX_CHARS: usize = 10_000;
-const TASK_WAIT_TIMEOUT_SECS: u64 = 120;
+const DEFAULT_TASK_WAIT_TIMEOUT_SECS: u64 = 600;
 
 pub async fn node_list(
     manager: Arc<ConnectionManager>,
     host: Option<String>,
     audit: Arc<AuditLogger>,
 ) -> Result<String> {
-    let host = host.unwrap_or_else(|| default_proxmox_host(&manager));
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
     let result: Result<String> = async {
         let client = manager.get_proxmox(&host)?;
         let nodes = client.get("/nodes").await?;
@@ -94,7 +94,7 @@ pub async fn node_status(
     node: Option<String>,
     audit: Arc<AuditLogger>,
 ) -> Result<String> {
-    let host = host.unwrap_or_else(|| default_proxmox_host(&manager));
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
     let result: Result<String> = async {
         let client = manager.get_proxmox(&host)?;
         let node_name = client.resolve_node(node.as_deref()).await?;
@@ -218,7 +218,7 @@ pub async fn vm_list(
     vm_type: Option<String>,
     audit: Arc<AuditLogger>,
 ) -> Result<String> {
-    let host = host.unwrap_or_else(|| default_proxmox_host(&manager));
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
     let result: Result<String> = async {
         let client = manager.get_proxmox(&host)?;
         let node_name = client.resolve_node(node.as_deref()).await?;
@@ -320,7 +320,7 @@ pub async fn vm_status(
     vm_type: Option<String>,
     audit: Arc<AuditLogger>,
 ) -> Result<String> {
-    let host = host.unwrap_or_else(|| default_proxmox_host(&manager));
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
     let result: Result<String> = async {
         let client = manager.get_proxmox(&host)?;
         let node_name = client.resolve_node(node.as_deref()).await?;
@@ -421,7 +421,7 @@ pub async fn vm_start(
     dry_run: Option<bool>,
     audit: Arc<AuditLogger>,
 ) -> Result<String> {
-    let host = host.unwrap_or_else(|| default_proxmox_host(&manager));
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
     let vm_type = vm_type.unwrap_or_else(|| "qemu".to_string());
 
     ensure_vm_type(&vm_type)?;
@@ -451,7 +451,7 @@ pub async fn vm_start(
 
         if let Some(upid) = response.as_str() {
             let result = client
-                .wait_for_task(&node_name, upid, TASK_WAIT_TIMEOUT_SECS)
+                .wait_for_task(&node_name, upid, task_wait_timeout_secs(&manager, &host))
                 .await?;
             Ok(format!(
                 "Started {} {} on node '{}'. {}",
@@ -499,7 +499,7 @@ pub async fn vm_stop(
     dry_run: Option<bool>,
     audit: Arc<AuditLogger>,
 ) -> Result<String> {
-    let host = host.unwrap_or_else(|| default_proxmox_host(&manager));
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
     let vm_type = vm_type.unwrap_or_else(|| "qemu".to_string());
 
     ensure_vm_type(&vm_type)?;
@@ -568,7 +568,7 @@ pub async fn vm_stop_confirmed(
 
         if let Some(upid) = response.as_str() {
             let result = client
-                .wait_for_task(&node_name, upid, TASK_WAIT_TIMEOUT_SECS)
+                .wait_for_task(&node_name, upid, task_wait_timeout_secs(&manager, &host))
                 .await?;
             Ok(format!(
                 "Stopped {} {} on node '{}'. {}",
@@ -620,7 +620,7 @@ pub async fn vm_create(
     dry_run: Option<bool>,
     audit: Arc<AuditLogger>,
 ) -> Result<String> {
-    let host = host.unwrap_or_else(|| default_proxmox_host(&manager));
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
     let vm_type = vm_type.unwrap_or_else(|| "qemu".to_string());
 
     ensure_vm_type(&vm_type)?;
@@ -791,7 +791,7 @@ pub async fn vm_create_confirmed(
 
         if let Some(upid) = response.as_str() {
             let result = client
-                .wait_for_task(&node_name, upid, TASK_WAIT_TIMEOUT_SECS)
+                .wait_for_task(&node_name, upid, task_wait_timeout_secs(&manager, &host))
                 .await?;
             Ok(format!(
                 "Created {} {} on node '{}'. {}",
@@ -841,7 +841,7 @@ pub async fn vm_clone(
     dry_run: Option<bool>,
     audit: Arc<AuditLogger>,
 ) -> Result<String> {
-    let host = host.unwrap_or_else(|| default_proxmox_host(&manager));
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
 
     if dry_run.unwrap_or(false) {
         let output = format!(
@@ -895,7 +895,7 @@ pub async fn vm_clone(
 
         if let Some(upid) = response.as_str() {
             let result = client
-                .wait_for_task(&node_name, upid, TASK_WAIT_TIMEOUT_SECS)
+                .wait_for_task(&node_name, upid, task_wait_timeout_secs(&manager, &host))
                 .await?;
             Ok(format!(
                 "Cloned VM {} to {} on node '{}'. {}\n{}",
@@ -950,7 +950,7 @@ pub async fn vm_delete(
     dry_run: Option<bool>,
     audit: Arc<AuditLogger>,
 ) -> Result<String> {
-    let host = host.unwrap_or_else(|| default_proxmox_host(&manager));
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
     let vm_type = vm_type.unwrap_or_else(|| "qemu".to_string());
 
     ensure_vm_type(&vm_type)?;
@@ -1033,7 +1033,7 @@ pub async fn vm_delete_confirmed(
 
         if let Some(upid) = response.as_str() {
             let result = client
-                .wait_for_task(&node_name, upid, TASK_WAIT_TIMEOUT_SECS)
+                .wait_for_task(&node_name, upid, task_wait_timeout_secs(&manager, &host))
                 .await?;
             Ok(format!(
                 "Deleted {} {} on node '{}'. {}",
@@ -1084,7 +1084,7 @@ pub async fn snapshot_list(
     vm_type: Option<String>,
     audit: Arc<AuditLogger>,
 ) -> Result<String> {
-    let host = host.unwrap_or_else(|| default_proxmox_host(&manager));
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
     let result: Result<String> = async {
         let client = manager.get_proxmox(&host)?;
         let node_name = client.resolve_node(node.as_deref()).await?;
@@ -1189,7 +1189,7 @@ pub async fn snapshot_create(
     dry_run: Option<bool>,
     audit: Arc<AuditLogger>,
 ) -> Result<String> {
-    let host = host.unwrap_or_else(|| default_proxmox_host(&manager));
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
     let vm_type = vm_type.unwrap_or_else(|| "qemu".to_string());
 
     ensure_vm_type(&vm_type)?;
@@ -1232,7 +1232,7 @@ pub async fn snapshot_create(
 
         if let Some(upid) = response.as_str() {
             let result = client
-                .wait_for_task(&node_name, upid, TASK_WAIT_TIMEOUT_SECS)
+                .wait_for_task(&node_name, upid, task_wait_timeout_secs(&manager, &host))
                 .await?;
             Ok(format!(
                 "Created snapshot '{}' for {} {} on node '{}'. {}",
@@ -1286,7 +1286,7 @@ pub async fn snapshot_rollback(
     dry_run: Option<bool>,
     audit: Arc<AuditLogger>,
 ) -> Result<String> {
-    let host = host.unwrap_or_else(|| default_proxmox_host(&manager));
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
     let vm_type = vm_type.unwrap_or_else(|| "qemu".to_string());
 
     ensure_vm_type(&vm_type)?;
@@ -1368,7 +1368,7 @@ pub async fn snapshot_rollback_confirmed(
 
         if let Some(upid) = response.as_str() {
             let result = client
-                .wait_for_task(&node_name, upid, TASK_WAIT_TIMEOUT_SECS)
+                .wait_for_task(&node_name, upid, task_wait_timeout_secs(&manager, &host))
                 .await?;
             Ok(format!(
                 "Rolled back {} {} to snapshot '{}' on node '{}'. {}",
@@ -1420,7 +1420,7 @@ pub async fn storage_list(
     node: Option<String>,
     audit: Arc<AuditLogger>,
 ) -> Result<String> {
-    let host = host.unwrap_or_else(|| default_proxmox_host(&manager));
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
     let result: Result<String> = async {
         let client = manager.get_proxmox(&host)?;
         let node_name = client.resolve_node(node.as_deref()).await?;
@@ -1504,7 +1504,7 @@ pub async fn network_list(
     node: Option<String>,
     audit: Arc<AuditLogger>,
 ) -> Result<String> {
-    let host = host.unwrap_or_else(|| default_proxmox_host(&manager));
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
     let result: Result<String> = async {
         let client = manager.get_proxmox(&host)?;
         let node_name = client.resolve_node(node.as_deref()).await?;
@@ -1573,15 +1573,35 @@ pub async fn network_list(
     }
 }
 
-fn default_proxmox_host(manager: &ConnectionManager) -> String {
+pub(crate) fn default_proxmox_host(manager: &ConnectionManager) -> Result<String> {
+    let hosts = &manager.config().proxmox.hosts;
+
+    match hosts.len() {
+        0 => Err(anyhow!("No Proxmox hosts are configured.")),
+        1 => hosts
+            .keys()
+            .next()
+            .cloned()
+            .ok_or_else(|| anyhow!("No Proxmox hosts are configured.")),
+        _ => {
+            let mut host_names = hosts.keys().cloned().collect::<Vec<_>>();
+            host_names.sort();
+            Err(anyhow!(
+                "Multiple Proxmox hosts are configured ({}). Pass 'host' explicitly.",
+                host_names.join(", ")
+            ))
+        }
+    }
+}
+
+fn task_wait_timeout_secs(manager: &ConnectionManager, host: &str) -> u64 {
     manager
         .config()
         .proxmox
         .hosts
-        .keys()
-        .next()
-        .cloned()
-        .unwrap_or_else(|| "default".to_string())
+        .get(host)
+        .map(|host| host.task_wait_timeout_secs)
+        .unwrap_or(DEFAULT_TASK_WAIT_TIMEOUT_SECS)
 }
 
 fn ensure_vm_type(vm_type: &str) -> Result<()> {

@@ -85,6 +85,7 @@ token_id = "root@pam!spacebot"
 token_secret = "${PVE_TOKEN_SECRET}"
 node = "pve1"
 verify_tls = false
+task_wait_timeout_secs = 600
 
 # SSH hosts
 [ssh.hosts.home]

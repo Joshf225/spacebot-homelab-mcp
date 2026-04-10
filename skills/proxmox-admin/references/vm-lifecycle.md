@@ -45,7 +45,7 @@ Use this when no suitable template exists.
 5. **Execute the creation** (will require confirmation):
    ```
    proxmox.vm.create (...same params, dry_run=false)
-   confirm_operation (token=<returned_token>)
+   confirm_operation (token=<returned_token>, tool_name="proxmox.vm.create")
    ```
 
 6. **Start the VM:**
@@ -132,7 +132,7 @@ Set `full=true` for full clone (default), `full=false` for linked clone.
 ```
 proxmox.vm.stop (host=<PVE_HOST>, vmid=<VMID>, dry_run=true)
 proxmox.vm.stop (host=<PVE_HOST>, vmid=<VMID>)
-confirm_operation (token=<returned_token>)
+confirm_operation (token=<returned_token>, tool_name="proxmox.vm.stop")
 ```
 
 This performs a graceful shutdown (ACPI shutdown signal for QEMU, `shutdown` for LXC). The VM's guest OS should handle the signal and shut down cleanly.
@@ -153,7 +153,7 @@ pct stop <VMID>   # Force-stop LXC container
 proxmox.vm.status (host=<PVE_HOST>, vmid=<VMID>)   # Confirm stopped
 proxmox.vm.delete (host=<PVE_HOST>, vmid=<VMID>, purge=true, dry_run=true)
 proxmox.vm.delete (host=<PVE_HOST>, vmid=<VMID>, purge=true)
-confirm_operation (token=<returned_token>)
+confirm_operation (token=<returned_token>, tool_name="proxmox.vm.delete")
 ```
 
 The `purge=true` option also removes unreferenced disk images and purges the VM from backup jobs and replication configs.

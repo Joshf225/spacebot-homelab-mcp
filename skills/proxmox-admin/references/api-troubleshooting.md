@@ -163,7 +163,7 @@ Proxmox doesn't enforce API rate limits, but rapid API calls can overload the `p
 
 Spacebot supports rate limiting in config:
 ```toml
-[tools.rate_limits]
+[rate_limits.limits]
 "proxmox.*" = { per_minute = 15 }
 ```
 

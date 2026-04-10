@@ -314,7 +314,7 @@ For QEMU templates with cloud-init:
 
 2. **Use dry_run on mutating tools.** All mutating Proxmox tools support `dry_run=true`. Use it to preview the operation before executing.
 
-3. **Confirm destructive tools require two steps.** Tools marked with "Confirmation Required" return a confirmation token on first call. The agent must call `confirm_operation` with that token to execute. This prevents accidental destruction.
+3. **Confirm destructive tools require two steps.** Tools marked with "Confirmation Required" return a confirmation token on first call. The agent must call `confirm_operation` with both that token and the original tool name to execute. This prevents accidental destruction.
 
 4. **Never delete a template that has linked clones.** Linked clones depend on the template's disk. Deleting the template will corrupt all linked clones. Use `proxmox.vm.list` to check for VMs that might be linked clones before deleting a template.
 

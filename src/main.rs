@@ -91,7 +91,7 @@ async fn run_server(config_path: Option<PathBuf>) -> Result<()> {
         "Configuration loaded: {} Docker hosts, {} SSH hosts, {} Proxmox hosts",
         config.docker.len(),
         config.ssh.hosts.len(),
-        config.proxmox.len()
+        config.proxmox.hosts.len()
     );
 
     // Create metrics if configured

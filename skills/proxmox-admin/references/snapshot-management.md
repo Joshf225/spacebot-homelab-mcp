@@ -11,7 +11,7 @@ Snapshot creation, rollback, and cleanup patterns for Proxmox VMs and LXC contai
 
 ## Creating a snapshot
 
-```
+```text
 proxmox.vm.snapshot.create (
   host=<PVE_HOST>,
   vmid=<VMID>,
@@ -42,7 +42,7 @@ RAM-state snapshots are larger and only available for QEMU VMs (not LXC).
 
 ## Listing snapshots
 
-```
+```text
 proxmox.vm.snapshot.list (host=<PVE_HOST>, vmid=<VMID>)
 ```
 
@@ -55,12 +55,12 @@ Snapshots form a tree. Each snapshot has a parent (except the first). The `curre
 **This is destructive.** All changes since the snapshot will be lost.
 
 1. **List snapshots to verify the target:**
-   ```
+   ```text
    proxmox.vm.snapshot.list (host=<PVE_HOST>, vmid=<VMID>)
    ```
 
 2. **Preview the rollback:**
-   ```
+   ```text
    proxmox.vm.snapshot.rollback (
      host=<PVE_HOST>,
      vmid=<VMID>,
@@ -70,22 +70,23 @@ Snapshots form a tree. Each snapshot has a parent (except the first). The `curre
    ```
 
 3. **Stop the VM first** (recommended for reliable rollback):
-   ```
+   ```text
    proxmox.vm.stop (host=<PVE_HOST>, vmid=<VMID>)
+   confirm_operation (token=<returned_token>, tool_name="proxmox.vm.stop")
    ```
 
 4. **Execute the rollback** (requires confirmation):
-   ```
+   ```text
    proxmox.vm.snapshot.rollback (
      host=<PVE_HOST>,
      vmid=<VMID>,
      snapname="pre-upgrade-2024-01-15"
    )
-   confirm_operation (token=<returned_token>)
+   confirm_operation (token=<returned_token>, tool_name="proxmox.vm.snapshot.rollback")
    ```
 
 5. **Start the VM:**
-   ```
+   ```text
    proxmox.vm.start (host=<PVE_HOST>, vmid=<VMID>)
    ```
 

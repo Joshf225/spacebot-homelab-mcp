@@ -1455,10 +1455,14 @@ impl HomelabMcpServer {
             "proxmox.vm.stop" => {
                 let params: ProxmoxVmStopArgs = serde_json::from_str(&original_params_json)
                     .map_err(|error| error.to_string())?;
+                let host = params
+                    .host
+                    .map_or_else(|| proxmox::default_proxmox_host(&self.manager), Ok)
+                    .map_err(|error| error.to_string())?;
                 self.audit
                     .log(
                         "proxmox.vm.stop",
-                        params.host.as_deref().unwrap_or("default"),
+                        &host,
                         "confirmed_exec",
                         Some(&params.vmid.to_string()),
                     )
@@ -1466,7 +1470,7 @@ impl HomelabMcpServer {
                     .ok();
                 proxmox::vm_stop_confirmed(
                     self.manager.clone(),
-                    params.host.unwrap_or_else(|| "default".to_string()),
+                    host,
                     params.node,
                     params.vmid,
                     params.vm_type,
@@ -1478,10 +1482,14 @@ impl HomelabMcpServer {
             "proxmox.vm.create" => {
                 let params: ProxmoxVmCreateArgs = serde_json::from_str(&original_params_json)
                     .map_err(|error| error.to_string())?;
+                let host = params
+                    .host
+                    .map_or_else(|| proxmox::default_proxmox_host(&self.manager), Ok)
+                    .map_err(|error| error.to_string())?;
                 self.audit
                     .log(
                         "proxmox.vm.create",
-                        params.host.as_deref().unwrap_or("default"),
+                        &host,
                         "confirmed_exec",
                         params.name.as_deref(),
                     )
@@ -1489,7 +1497,7 @@ impl HomelabMcpServer {
                     .ok();
                 proxmox::vm_create_confirmed(
                     self.manager.clone(),
-                    params.host.unwrap_or_else(|| "default".to_string()),
+                    host,
                     params.node,
                     params.vmid,
                     params.vm_type.unwrap_or_else(|| "qemu".to_string()),
@@ -1509,10 +1517,14 @@ impl HomelabMcpServer {
             "proxmox.vm.delete" => {
                 let params: ProxmoxVmDeleteArgs = serde_json::from_str(&original_params_json)
                     .map_err(|error| error.to_string())?;
+                let host = params
+                    .host
+                    .map_or_else(|| proxmox::default_proxmox_host(&self.manager), Ok)
+                    .map_err(|error| error.to_string())?;
                 self.audit
                     .log(
                         "proxmox.vm.delete",
-                        params.host.as_deref().unwrap_or("default"),
+                        &host,
                         "confirmed_exec",
                         Some(&params.vmid.to_string()),
                     )
@@ -1520,7 +1532,7 @@ impl HomelabMcpServer {
                     .ok();
                 proxmox::vm_delete_confirmed(
                     self.manager.clone(),
-                    params.host.unwrap_or_else(|| "default".to_string()),
+                    host,
                     params.node,
                     params.vmid,
                     params.vm_type.unwrap_or_else(|| "qemu".to_string()),
@@ -1534,10 +1546,14 @@ impl HomelabMcpServer {
                 let params: ProxmoxSnapshotRollbackArgs =
                     serde_json::from_str(&original_params_json)
                         .map_err(|error| error.to_string())?;
+                let host = params
+                    .host
+                    .map_or_else(|| proxmox::default_proxmox_host(&self.manager), Ok)
+                    .map_err(|error| error.to_string())?;
                 self.audit
                     .log(
                         "proxmox.vm.snapshot.rollback",
-                        params.host.as_deref().unwrap_or("default"),
+                        &host,
                         "confirmed_exec",
                         Some(&params.snapname),
                     )
@@ -1545,7 +1561,7 @@ impl HomelabMcpServer {
                     .ok();
                 proxmox::snapshot_rollback_confirmed(
                     self.manager.clone(),
-                    params.host.unwrap_or_else(|| "default".to_string()),
+                    host,
                     params.node,
                     params.vmid,
                     params.vm_type.unwrap_or_else(|| "qemu".to_string()),
