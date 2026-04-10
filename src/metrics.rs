@@ -32,6 +32,9 @@ pub struct Metrics {
     /// SSH connection health (labels: host; 1=connected, 0=disconnected)
     pub ssh_health: IntGaugeVec,
 
+    /// Proxmox connection health (labels: host; 1=connected, 0=disconnected)
+    pub proxmox_health: IntGaugeVec,
+
     /// Confirmation tokens issued
     pub confirmation_tokens_issued: IntCounterVec,
 
@@ -99,6 +102,15 @@ impl Metrics {
         )
         .expect("ssh_health metric");
 
+        let proxmox_health = IntGaugeVec::new(
+            Opts::new(
+                "proxmox_connection_healthy",
+                "Proxmox VE connection health (1=up, 0=down)",
+            ),
+            &["host"],
+        )
+        .expect("proxmox_health metric");
+
         let confirmation_tokens_issued = IntCounterVec::new(
             Opts::new(
                 "confirmation_tokens_issued_total",
@@ -126,6 +138,7 @@ impl Metrics {
             Box::new(ssh_pool_total.clone()),
             Box::new(docker_health.clone()),
             Box::new(ssh_health.clone()),
+            Box::new(proxmox_health.clone()),
             Box::new(confirmation_tokens_issued.clone()),
             Box::new(confirmation_tokens_resolved.clone()),
         ] {
@@ -141,6 +154,7 @@ impl Metrics {
             ssh_pool_total,
             docker_health,
             ssh_health,
+            proxmox_health,
             confirmation_tokens_issued,
             confirmation_tokens_resolved,
         }

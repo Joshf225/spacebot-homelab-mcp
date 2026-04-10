@@ -278,6 +278,7 @@ mod tests {
         let config = Config {
             docker: Default::default(),
             ssh: Default::default(),
+            proxmox: Default::default(),
             audit: crate::config::AuditConfig {
                 file: None,
                 syslog: None,
@@ -298,6 +299,7 @@ mod tests {
         let config = Config {
             docker: Default::default(),
             ssh: Default::default(),
+            proxmox: Default::default(),
             audit: crate::config::AuditConfig {
                 file: Some("/tmp/nonexistent-audit-test-12345.log".into()),
                 syslog: None,
@@ -333,6 +335,7 @@ mod tests {
         let config = Config {
             docker: Default::default(),
             ssh: Default::default(),
+            proxmox: Default::default(),
             audit: crate::config::AuditConfig {
                 file: Some(tmp.path().to_path_buf()),
                 syslog: None,
@@ -372,6 +375,7 @@ mod tests {
         let config = Config {
             docker: Default::default(),
             ssh: Default::default(),
+            proxmox: Default::default(),
             audit: crate::config::AuditConfig {
                 file: Some(tmp.path().to_path_buf()),
                 syslog: None,
@@ -415,6 +419,7 @@ mod tests {
         let config = Config {
             docker: Default::default(),
             ssh: Default::default(),
+            proxmox: Default::default(),
             audit: crate::config::AuditConfig {
                 file: Some(tmp.path().to_path_buf()),
                 syslog: None,
@@ -521,6 +526,7 @@ mod tests {
         let config = Config {
             docker: Default::default(),
             ssh: Default::default(),
+            proxmox: Default::default(),
             audit: crate::config::AuditConfig {
                 file: Some(tmp.path().to_path_buf()),
                 syslog: None,
@@ -561,6 +567,7 @@ mod tests {
         let config = Config {
             docker: Default::default(),
             ssh: Default::default(),
+            proxmox: Default::default(),
             audit: crate::config::AuditConfig {
                 file: Some(tmp.path().to_path_buf()),
                 syslog: None,

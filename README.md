@@ -1,6 +1,6 @@
 # spacebot-homelab-mcp
 
-An MCP (Model Context Protocol) server that provides Docker and SSH tools for managing homelab infrastructure via Spacebot.
+An MCP (Model Context Protocol) server that provides Docker, SSH, and Proxmox VE tools for managing homelab infrastructure via Spacebot.
 
 This is a standalone Rust binary that runs as an external process. Spacebot connects to it via the MCP protocol and delegates homelab-related tasks to it.
 
@@ -14,10 +14,12 @@ MCP Protocol (stdio)
 spacebot-homelab-mcp
     ├── Connection Manager
     │   ├── Docker clients (local socket + remote TCP/TLS)
-    │   └── SSH connection pool (multiplexed sessions)
-    ├── Tool implementations (18 tools)
+    │   ├── SSH connection pool (multiplexed sessions)
+    │   └── Proxmox REST API clients (token auth + self-signed TLS support)
+    ├── Tool implementations (32 tools)
     │   ├── docker.container.*  (7 tools)
     │   ├── docker.image.*      (5 tools)
+    │   ├── proxmox.*           (14 tools)
     │   ├── ssh.*               (3 tools)
     │   ├── confirm_operation   (confirmation flow)
     │   └── audit.*             (2 verification tools)
@@ -76,6 +78,17 @@ host = "unix:///var/run/docker.sock"
 [docker.hosts.vps]
 host = "tcp://vps.example.com:2375"
 
+# Proxmox VE hosts
+[proxmox.hosts.pve1]
+url = "https://192.168.1.10:8006"
+token_id = "root@pam!spacebot"
+token_secret = "${PVE_TOKEN_SECRET}"
+node = "pve1"
+verify_tls = false
+task_wait_timeout_secs = 600
+next_vmid_retry_attempts = 3
+next_vmid_retry_backoff_ms = 250
+
 # SSH hosts
 [ssh.hosts.home]
 host = "192.168.1.1"
@@ -103,18 +116,37 @@ blocked_patterns = ["rm -rf", "dd if=", "mkfs", "> /dev/"]
 "docker.image.*" = { per_minute = 5 }
 "docker.image.delete" = { per_minute = 1 }
 "docker.image.prune" = { per_minute = 1 }
+"proxmox.*" = { per_minute = 15 }
 "ssh.exec" = { per_minute = 10 }
 
 # Confirmation rules for destructive operations
+# NOTE: These rules require a client that supports the two-step MCP
+# `confirm_operation` flow. If your Spacebot build/UI does not surface
+# pending confirmations, leave this section disabled and rely on `dry_run`
+# until your client adds confirmation support.
 [confirm]
 "docker.container.delete" = "always"
 "docker.container.stop" = "always"
 "docker.image.delete" = "always"
 "docker.image.prune" = "always"
+"proxmox.vm.stop" = "always"
+"proxmox.vm.create" = "always"
+"proxmox.vm.delete" = "always"
+"proxmox.vm.snapshot.rollback" = "always"
 "ssh.exec" = { when_pattern = ["rm -rf", "dd if=", "systemctl restart"] }
 ```
 
 ## Usage
+
+### Command overview
+
+The binary has three main subcommands:
+
+| Command | Purpose |
+|---------|---------|
+| `server` | Start the MCP server over stdio for Spacebot |
+| `doctor` | Validate config, check Docker/SSH/Proxmox connectivity, and print a readiness summary |
+| `setup` | Launch the interactive configuration wizard |
 
 ### Start the MCP server
 
@@ -124,6 +156,8 @@ spacebot-homelab-mcp server --config ~/.spacebot-homelab/config.toml
 ```
 
 ### Validate configuration
+
+Use `doctor` before connecting Spacebot or after changing `config.toml`. It validates configuration, checks Docker, SSH, and Proxmox connectivity, and prints a summary of security settings and rate limits.
 
 ```bash
 spacebot-homelab-mcp doctor --config ~/.spacebot-homelab/config.toml
@@ -179,6 +213,35 @@ args = ["server", "--config", "~/.spacebot-homelab/config.toml"]
 | `ssh.upload` | Upload a file via SFTP | Yes | — |
 | `ssh.download` | Download a file via SFTP | No | — |
 
+### Proxmox node and VM inventory tools
+
+| Tool | Description | Destructive | Confirmation |
+|------|-------------|:-----------:|:------------:|
+| `proxmox.node.list` | List Proxmox cluster nodes with CPU, memory, uptime, and version | No | — |
+| `proxmox.node.status` | Get detailed node status (CPU, RAM, storage, kernel, uptime) | No | — |
+| `proxmox.vm.list` | List QEMU VMs and LXC containers on a node | No | — |
+| `proxmox.vm.status` | Get detailed status for a VM or container | No | — |
+
+### Proxmox VM lifecycle tools
+
+| Tool | Description | Destructive | Confirmation |
+|------|-------------|:-----------:|:------------:|
+| `proxmox.vm.start` | Start a Proxmox VM or LXC container | No | — |
+| `proxmox.vm.stop` | Force-stop a Proxmox VM or LXC container immediately | Yes | Yes |
+| `proxmox.vm.create` | Create a new Proxmox VM or LXC container | Yes | Yes |
+| `proxmox.vm.clone` | Clone an existing Proxmox VM | No | — |
+| `proxmox.vm.delete` | Permanently delete a Proxmox VM or LXC container | Yes | Yes |
+
+### Proxmox snapshot and infrastructure tools
+
+| Tool | Description | Destructive | Confirmation |
+|------|-------------|:-----------:|:------------:|
+| `proxmox.vm.snapshot.list` | List snapshots for a VM or LXC container | No | — |
+| `proxmox.vm.snapshot.create` | Create a VM or container snapshot | No | — |
+| `proxmox.vm.snapshot.rollback` | Roll back a VM or container to a snapshot | Yes | Yes |
+| `proxmox.storage.list` | List Proxmox storage pools and usage | No | — |
+| `proxmox.network.list` | List Proxmox network interfaces, bridges, VLANs, and bonds | No | — |
+
 ### System tools
 
 | Tool | Description |
@@ -191,14 +254,26 @@ args = ["server", "--config", "~/.spacebot-homelab/config.toml"]
 
 Destructive tools use a two-step confirmation flow:
 
-1. Call the destructive tool (e.g. `docker.container.delete`) — returns `confirmation_required` with a UUID token
+1. Call the destructive tool (e.g. `docker.container.delete` or `proxmox.vm.delete`) — returns `confirmation_required` with a UUID token
 2. Call `confirm_operation` with the token and tool name — executes the operation
 
 Tokens are single-use, tool-specific, and expire after 5 minutes.
 
+### Client compatibility
+
+The `[confirm]` rules above only work when the MCP client can complete the second step by calling `confirm_operation`.
+
+If your Spacebot build or UI does not surface pending MCP confirmations yet, destructive tools protected by `[confirm]` will appear to stall because the user cannot complete the confirmation step.
+
+In that case:
+
+1. Leave the `[confirm]` section disabled for homelab MCP tools.
+2. Use `dry_run=true` before destructive operations.
+3. Re-enable `[confirm]` once your client supports MCP confirmation UX.
+
 ### Dry run support
 
-All destructive tools accept a `dry_run` parameter. Set `dry_run=true` to preview what would happen without executing.
+Mutating Docker tools, mutating Proxmox tools, and `ssh.exec` support `dry_run`. Set `dry_run=true` to preview what would happen without executing.
 
 ## Security
 
@@ -213,7 +288,7 @@ All destructive tools accept a `dry_run` parameter. Set `dry_run=true` to previe
 7. **Audit verification tools** — `audit.verify_operation` and `audit.verify_container_state` let callers confirm operations actually happened
 8. **Audit logging** — Append-only log of all tool invocations, outside the agent data directory
 9. **Env var redaction** — Container inspect redacts environment variable values
-10. **Connection validation** — `doctor` subcommand validates all connections at startup
+10. **Connection validation** — `doctor` validates Docker, SSH, and Proxmox connections
 11. **Graceful degradation** — Individual host connections can fail without disabling other tools
 
 ## Development
@@ -224,8 +299,8 @@ All destructive tools accept a `dry_run` parameter. Set `dry_run=true` to previe
 src/
 ├── main.rs              — CLI entry point (server, doctor, setup subcommands)
 ├── config.rs            — Configuration loading and validation
-├── connection.rs        — Connection manager (Docker clients, SSH pool)
-├── mcp.rs               — MCP tool handler (18 tools registered)
+├── connection.rs        — Connection manager (Docker clients, SSH pool, Proxmox clients)
+├── mcp.rs               — MCP tool handler (32 tools registered)
 ├── audit.rs             — Audit logging
 ├── confirmation.rs      — Two-step confirmation manager
 ├── rate_limit.rs        — Per-tool rate limiting
@@ -237,6 +312,7 @@ src/
     ├── mod.rs           — Output envelope wrapping, truncation
     ├── docker.rs        — Docker container tool implementations
     ├── docker_image.rs  — Docker image tool implementations
+    ├── proxmox.rs       — Proxmox VE tool implementations
     ├── ssh.rs           — SSH tool implementations
     └── verify.rs        — Audit verification tool implementations
 tests/

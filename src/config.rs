@@ -14,6 +14,8 @@ pub struct Config {
     #[serde(default)]
     pub ssh: SshConfig,
     #[serde(default)]
+    pub proxmox: ProxmoxConfig,
+    #[serde(default)]
     pub audit: AuditConfig,
     #[serde(default)]
     pub rate_limits: RateLimitConfig,
@@ -256,6 +258,70 @@ fn default_metrics_listen() -> String {
     "127.0.0.1:9090".to_string()
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ProxmoxConfig {
+    #[serde(default)]
+    pub hosts: HashMap<String, ProxmoxHost>,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct ProxmoxHost {
+    /// Proxmox VE API URL (e.g., "https://192.168.1.10:8006")
+    pub url: String,
+    /// API token user + token name (e.g., "root@pam!spacebot")
+    pub token_id: String,
+    /// API token secret
+    pub token_secret: String,
+    /// Node name for this host (e.g., "pve1"). If omitted, auto-detected from /nodes.
+    pub node: Option<String>,
+    /// Verify TLS certificates (default: true). Set to false only for trusted self-signed certs.
+    #[serde(default = "default_verify_tls_true")]
+    pub verify_tls: bool,
+    /// Local wait budget for async Proxmox tasks before returning the task UPID.
+    #[serde(default = "default_proxmox_task_wait_timeout_secs")]
+    pub task_wait_timeout_secs: u64,
+    /// Retry count for auto-assigned VMID conflicts when /cluster/nextid races.
+    #[serde(default = "default_proxmox_next_vmid_retry_attempts")]
+    pub next_vmid_retry_attempts: usize,
+    /// Backoff between auto-assigned VMID conflict retries.
+    #[serde(default = "default_proxmox_next_vmid_retry_backoff_ms")]
+    pub next_vmid_retry_backoff_ms: u64,
+}
+
+fn default_verify_tls_true() -> bool {
+    true
+}
+
+fn default_proxmox_task_wait_timeout_secs() -> u64 {
+    600
+}
+
+fn default_proxmox_next_vmid_retry_attempts() -> usize {
+    3
+}
+
+fn default_proxmox_next_vmid_retry_backoff_ms() -> u64 {
+    250
+}
+
+impl std::fmt::Debug for ProxmoxHost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProxmoxHost")
+            .field("url", &self.url)
+            .field("token_id", &self.token_id)
+            .field("token_secret", &"<redacted>")
+            .field("node", &self.node)
+            .field("verify_tls", &self.verify_tls)
+            .field("task_wait_timeout_secs", &self.task_wait_timeout_secs)
+            .field("next_vmid_retry_attempts", &self.next_vmid_retry_attempts)
+            .field(
+                "next_vmid_retry_backoff_ms",
+                &self.next_vmid_retry_backoff_ms,
+            )
+            .finish()
+    }
+}
+
 impl Config {
     /// Load configuration from a TOML file.
     pub fn load(path: Option<PathBuf>) -> Result<Self> {
@@ -282,9 +348,10 @@ impl Config {
         config.validate()?;
 
         info!(
-            "Configuration loaded successfully: {} Docker hosts, {} SSH hosts",
+            "Configuration loaded successfully: {} Docker hosts, {} SSH hosts, {} Proxmox hosts",
             config.docker.hosts.len(),
-            config.ssh.hosts.len()
+            config.ssh.hosts.len(),
+            config.proxmox.hosts.len()
         );
 
         Ok(config)
@@ -342,6 +409,28 @@ impl Config {
             // Resolve env var references in passphrase (e.g. "$SSH_KEY_PASS" or "${SSH_KEY_PASS}")
             if let Some(passphrase) = &host.private_key_passphrase {
                 host.private_key_passphrase = Some(resolve_env_var(passphrase));
+            }
+        }
+
+        for (name, host) in &mut self.proxmox.hosts {
+            if !host.url.starts_with("https://") {
+                return Err(anyhow!(
+                    "Proxmox host '{}' URL must start with https://. Got: '{}'",
+                    name,
+                    host.url
+                ));
+            }
+            if host.token_id.is_empty() {
+                return Err(anyhow!("Proxmox host '{}' token_id cannot be empty", name));
+            }
+
+            host.token_secret = resolve_env_var(&host.token_secret);
+            host.token_secret = host.token_secret.trim().to_string();
+            if host.token_secret.is_empty() || is_unresolved_env_var_reference(&host.token_secret) {
+                return Err(anyhow!(
+                    "Proxmox host '{}' token_secret cannot be empty",
+                    name
+                ));
             }
         }
 
@@ -439,6 +528,21 @@ fn resolve_env_var(value: &str) -> String {
     }
 
     value.to_string()
+}
+
+fn is_unresolved_env_var_reference(value: &str) -> bool {
+    let trimmed = value.trim();
+
+    trimmed
+        .strip_prefix("${")
+        .and_then(|rest| rest.strip_suffix('}'))
+        .is_some_and(|var_name| !var_name.is_empty())
+        || trimmed.strip_prefix('$').is_some_and(|var_name| {
+            !var_name.is_empty()
+                && var_name
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        })
 }
 
 /// Validate config file permissions are not too open (Layer 1 security).
@@ -578,6 +682,23 @@ mod tests {
     }
 
     #[test]
+    fn test_proxmox_host_verify_tls_defaults_to_true() {
+        let host: ProxmoxHost = toml::from_str(
+            r#"
+            url = "https://192.168.1.10:8006"
+            token_id = "root@pam!spacebot"
+            token_secret = "fake-uuid"
+        "#,
+        )
+        .unwrap();
+
+        assert!(host.verify_tls);
+        assert_eq!(host.task_wait_timeout_secs, 600);
+        assert_eq!(host.next_vmid_retry_attempts, 3);
+        assert_eq!(host.next_vmid_retry_backoff_ms, 250);
+    }
+
+    #[test]
     fn test_expand_home_expands_tilde_using_home() {
         let _guard = ENV_LOCK.lock().unwrap();
         let home = std::env::temp_dir().join("spacebot-home-test");
@@ -640,5 +761,89 @@ mod tests {
         std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
         let result = check_config_permissions(tmp.path());
         assert!(result.is_ok(), "0600 should be accepted, got: {:?}", result);
+    }
+
+    #[test]
+    fn test_proxmox_config_validation() {
+        let toml_str = r#"
+            [proxmox.hosts.bad]
+            url = "not-a-url"
+            token_id = "root@pam!test"
+            token_secret = "fake-uuid"
+        "#;
+        let mut config: Config = toml::from_str(toml_str).unwrap();
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("URL must start with")
+        );
+    }
+
+    #[test]
+    fn test_proxmox_config_rejects_http_url() {
+        let toml_str = r#"
+            [proxmox.hosts.bad]
+            url = "http://192.168.1.10:8006"
+            token_id = "root@pam!test"
+            token_secret = "fake-uuid"
+        "#;
+
+        let mut config: Config = toml::from_str(toml_str).unwrap();
+        let result = config.validate();
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("must start with https://")
+        );
+    }
+
+    #[test]
+    fn test_proxmox_config_rejects_unresolved_token_secret_env_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _env = set_env_vars(&[("SPACEBOT_TEST_MISSING_PVE_SECRET", None)]);
+        let toml_str = r#"
+            [proxmox.hosts.bad]
+            url = "https://192.168.1.10:8006"
+            token_id = "root@pam!test"
+            token_secret = "${SPACEBOT_TEST_MISSING_PVE_SECRET}"
+        "#;
+
+        let mut config: Config = toml::from_str(toml_str).unwrap();
+        let result = config.validate();
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("token_secret cannot be empty")
+        );
+    }
+
+    #[test]
+    fn test_proxmox_config_rejects_whitespace_token_secret() {
+        let toml_str = r#"
+            [proxmox.hosts.bad]
+            url = "https://192.168.1.10:8006"
+            token_id = "root@pam!test"
+            token_secret = "   "
+        "#;
+
+        let mut config: Config = toml::from_str(toml_str).unwrap();
+        let result = config.validate();
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("token_secret cannot be empty")
+        );
     }
 }

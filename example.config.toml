@@ -11,6 +11,24 @@ host = "unix:///var/run/docker.sock"
 [docker.hosts.vps]
 host = "tcp://vps.example.com:2375"
 
+# Proxmox VE hosts
+[proxmox.hosts.pve1]
+url = "https://192.168.1.10:8006"
+token_id = "root@pam!spacebot"
+token_secret = "${PVE_TOKEN_SECRET}"  # Use env var for the API token secret
+node = "pve1"                          # Optional: node name (auto-detected if omitted)
+verify_tls = false                     # Accept self-signed certs (default: true)
+task_wait_timeout_secs = 600           # Optional: local wait budget before returning the task UPID
+next_vmid_retry_attempts = 3           # Optional: retries when auto-assigned VMIDs race /cluster/nextid
+next_vmid_retry_backoff_ms = 250       # Optional: backoff between auto-assigned VMID retries
+
+# Multi-node cluster example
+# [proxmox.hosts.pve2]
+# url = "https://192.168.1.11:8006"
+# token_id = "automation@pve!spacebot"
+# token_secret = "${PVE2_TOKEN_SECRET}"
+# node = "pve2"
+
 # SSH hosts
 [ssh.hosts.home]
 host = "192.168.1.1"
@@ -97,6 +115,7 @@ file = "/var/log/spacebot-homelab/audit.log"
 "docker.image.*" = { per_minute = 5 }
 "docker.image.delete" = { per_minute = 1 }
 "docker.image.prune" = { per_minute = 1 }
+"proxmox.*" = { per_minute = 15 }
 
 # Tools configuration (optional)
 # If the [tools] section is omitted entirely, all tools are enabled.
@@ -116,33 +135,40 @@ file = "/var/log/spacebot-homelab/audit.log"
 #     "docker.image.inspect",
 #     "docker.image.delete",      # Destructive — requires confirmation
 #     "docker.image.prune",       # Destructive — requires confirmation
+#     "proxmox.node.list",
+#     "proxmox.node.status",
+#     "proxmox.vm.list",
+#     "proxmox.vm.status",
+#     "proxmox.vm.start",
+#     "proxmox.vm.stop",              # Destructive — requires confirmation
+#     "proxmox.vm.create",            # Destructive — requires confirmation
+#     "proxmox.vm.clone",
+#     "proxmox.vm.delete",            # Destructive — requires confirmation
+#     "proxmox.vm.snapshot.list",
+#     "proxmox.vm.snapshot.create",
+#     "proxmox.vm.snapshot.rollback", # Destructive — requires confirmation
+#     "proxmox.storage.list",
+#     "proxmox.network.list",
 #     "ssh.exec",
 #     "ssh.upload",
 #     "ssh.download",
 # ]
 
 # Confirmation rules for destructive operations (Layer 8 security)
-# Keys are rule names; each rule matches a tool + optional command pattern.
-# [confirm.restart_services]
-# tool = "ssh.exec"
-# when_pattern = "systemctl restart"
-# message = "This will restart a systemd service. Please confirm."
-#
-# [confirm.stop_containers]
-# tool = "docker.container.stop"
-# message = "This will stop a running container. Please confirm."
-#
-# [confirm.delete_containers]
-# tool = "docker.container.delete"
-# message = "This will permanently delete a container. Please confirm."
-#
-# [confirm.delete_images]
-# tool = "docker.image.delete"
-# message = "This will permanently delete an image. Please confirm."
-#
-# [confirm.prune_images]
-# tool = "docker.image.prune"
-# message = "This will prune unused images. Please confirm."
+# NOTE: Enable this only if your MCP client can complete the two-step
+# `confirm_operation` flow. If your Spacebot build/UI does not yet surface
+# pending confirmations, leave this section commented out and use `dry_run`
+# for destructive commands until confirmation UX support is available.
+# [confirm]
+# "ssh.exec" = { when_pattern = ["systemctl restart"] }
+# "docker.container.stop" = "always"
+# "docker.container.delete" = "always"
+# "docker.image.delete" = "always"
+# "docker.image.prune" = "always"
+# "proxmox.vm.stop" = "always"
+# "proxmox.vm.create" = "always"
+# "proxmox.vm.delete" = "always"
+# "proxmox.vm.snapshot.rollback" = "always"
 
 # Docker host with TLS (optional)
 # [docker.hosts.secure-remote]

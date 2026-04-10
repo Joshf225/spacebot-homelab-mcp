@@ -14,7 +14,7 @@ use crate::confirmation::ConfirmationManager;
 use crate::connection::ConnectionManager;
 use crate::metrics::Metrics;
 use crate::rate_limit::RateLimiter;
-use crate::tools::{docker, docker_image, ssh, verify};
+use crate::tools::{docker, docker_image, proxmox, ssh, verify};
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct DockerContainerListArgs {
@@ -176,6 +176,202 @@ struct DockerImagePruneArgs {
     pub dry_run: Option<bool>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxNodeListArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxNodeStatusArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name (defaults to the configured node or auto-detected)
+    pub node: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxVmListArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name (defaults to configured or auto-detected)
+    pub node: Option<String>,
+    /// Filter by type: "qemu" for VMs, "lxc" for containers, omit for both
+    pub vm_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxVmStatusArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name (defaults to configured or auto-detected)
+    pub node: Option<String>,
+    /// VM/CT ID number
+    pub vmid: u64,
+    /// "qemu" or "lxc" (defaults to "qemu")
+    pub vm_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxVmStartArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// VM/CT ID number
+    pub vmid: u64,
+    /// "qemu" or "lxc" (defaults to "qemu")
+    pub vm_type: Option<String>,
+    /// Preview without executing
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxVmStopArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// VM/CT ID number
+    pub vmid: u64,
+    /// "qemu" or "lxc" (defaults to "qemu")
+    pub vm_type: Option<String>,
+    /// Preview without executing
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxVmCreateArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// VM/CT ID (auto-assigned if omitted)
+    pub vmid: Option<u64>,
+    /// "qemu" or "lxc" (defaults to "qemu")
+    pub vm_type: Option<String>,
+    /// VM/CT name
+    pub name: Option<String>,
+    /// Number of CPU cores
+    pub cores: Option<u64>,
+    /// Memory in MB
+    pub memory: Option<u64>,
+    /// QEMU OS type identifier (e.g. "l26" for Linux)
+    pub os_type: Option<String>,
+    /// LXC template path (e.g. "local:vztmpl/ubuntu-24.04-standard_24.04-1_amd64.tar.zst")
+    pub template: Option<String>,
+    /// ISO image for QEMU (e.g. "local:iso/ubuntu-22.04.iso")
+    pub iso: Option<String>,
+    /// Storage pool for disk (e.g. "local-lvm")
+    pub storage: Option<String>,
+    /// Disk size (e.g. "32G" for QEMU, "8" GB for LXC)
+    pub disk_size: Option<String>,
+    /// Network config (e.g. "virtio,bridge=vmbr0" for QEMU)
+    pub net: Option<String>,
+    /// Preview without executing
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxVmCloneArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// Source VM ID to clone
+    pub vmid: u64,
+    /// Target VM ID (auto-assigned if omitted)
+    pub newid: Option<u64>,
+    /// Name for the new VM
+    pub name: Option<String>,
+    /// Full clone (true) or linked clone (false). Default: true
+    pub full: Option<bool>,
+    /// Target storage for the clone
+    pub target_storage: Option<String>,
+    /// Preview without executing
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxVmDeleteArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// VM/CT ID to delete
+    pub vmid: u64,
+    /// "qemu" or "lxc" (defaults to "qemu")
+    pub vm_type: Option<String>,
+    /// Also remove unreferenced disks and purge from configs
+    pub purge: Option<bool>,
+    /// Preview without executing (recommended: use dry_run=true first)
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxSnapshotListArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// VM/CT ID
+    pub vmid: u64,
+    /// "qemu" or "lxc" (defaults to "qemu")
+    pub vm_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxSnapshotCreateArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// VM/CT ID
+    pub vmid: u64,
+    /// "qemu" or "lxc" (defaults to "qemu")
+    pub vm_type: Option<String>,
+    /// Snapshot name (must be unique for this VM)
+    pub snapname: String,
+    /// Optional description for the snapshot
+    pub description: Option<String>,
+    /// Include VM RAM state in snapshot (QEMU only)
+    pub vmstate: Option<bool>,
+    /// Preview without executing
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxSnapshotRollbackArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// VM/CT ID
+    pub vmid: u64,
+    /// "qemu" or "lxc" (defaults to "qemu")
+    pub vm_type: Option<String>,
+    /// Snapshot name to rollback to
+    pub snapname: String,
+    /// Preview without executing
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxStorageListArgs {
+    /// Proxmox host name from config
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxNetworkListArgs {
+    /// Proxmox host name from config
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+}
+
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for HomelabMcpServer {
     fn get_info(&self) -> ServerInfo {
@@ -185,7 +381,7 @@ impl ServerHandler for HomelabMcpServer {
                 env!("CARGO_PKG_VERSION"),
             ))
             .with_instructions(
-                "Homelab Docker and SSH tools for Spacebot.\n\n\
+                "Homelab Docker, SSH, and Proxmox VE tools for Spacebot.\n\n\
                  IMPORTANT — Tool result integrity:\n\
                  - Every tool response contains a unique server_nonce and executed_at timestamp \
                    that only this server can produce. Do NOT fabricate these fields.\n\
@@ -254,6 +450,20 @@ impl HomelabMcpServer {
         ("docker.image.inspect", "Docker"),
         ("docker.image.delete", "Docker"),
         ("docker.image.prune", "Docker"),
+        ("proxmox.node.list", "Proxmox"),
+        ("proxmox.node.status", "Proxmox"),
+        ("proxmox.vm.list", "Proxmox"),
+        ("proxmox.vm.status", "Proxmox"),
+        ("proxmox.vm.start", "Proxmox"),
+        ("proxmox.vm.stop", "Proxmox"),
+        ("proxmox.vm.create", "Proxmox"),
+        ("proxmox.vm.clone", "Proxmox"),
+        ("proxmox.vm.delete", "Proxmox"),
+        ("proxmox.vm.snapshot.list", "Proxmox"),
+        ("proxmox.vm.snapshot.create", "Proxmox"),
+        ("proxmox.vm.snapshot.rollback", "Proxmox"),
+        ("proxmox.storage.list", "Proxmox"),
+        ("proxmox.network.list", "Proxmox"),
         ("ssh.exec", "SSH"),
         ("ssh.upload", "SSH"),
         ("ssh.download", "SSH"),
@@ -290,8 +500,8 @@ impl HomelabMcpServer {
                 *counts.entry(category).or_insert(0) += 1;
             }
         }
-        // Fixed display order: Docker → SSH → Confirm → Audit
-        let order = ["Docker", "SSH", "Confirm", "Audit"];
+        // Fixed display order: Docker → SSH → Proxmox → Confirm → Audit
+        let order = ["Docker", "SSH", "Proxmox", "Confirm", "Audit"];
         order
             .iter()
             .filter_map(|cat| counts.get(cat).map(|n| format!("{cat} ({n})")))
@@ -653,6 +863,370 @@ impl HomelabMcpServer {
     }
 
     #[tool(
+        name = "proxmox.node.list",
+        description = "List Proxmox VE cluster nodes with resource usage (CPU, memory, uptime)",
+        annotations(read_only_hint = true, idempotent_hint = true)
+    )]
+    async fn proxmox_node_list(
+        &self,
+        Parameters(args): Parameters<ProxmoxNodeListArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.node.list")?;
+        let start = Instant::now();
+        let result = proxmox::node_list(self.manager.clone(), args.host, self.audit.clone())
+            .await
+            .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.node.list", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.node.status",
+        description = "Get detailed Proxmox node status (CPU, memory, storage, kernel, uptime)",
+        annotations(read_only_hint = true, idempotent_hint = true)
+    )]
+    async fn proxmox_node_status(
+        &self,
+        Parameters(args): Parameters<ProxmoxNodeStatusArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.node.status")?;
+        let start = Instant::now();
+        let result = proxmox::node_status(
+            self.manager.clone(),
+            args.host,
+            args.node,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.node.status", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.vm.list",
+        description = "List VMs and LXC containers on a Proxmox node. Filter by type with vm_type='qemu' or vm_type='lxc'.",
+        annotations(read_only_hint = true, idempotent_hint = true)
+    )]
+    async fn proxmox_vm_list(
+        &self,
+        Parameters(args): Parameters<ProxmoxVmListArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.list")?;
+        let start = Instant::now();
+        let result = proxmox::vm_list(
+            self.manager.clone(),
+            args.host,
+            args.node,
+            args.vm_type,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.list", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.vm.status",
+        description = "Get detailed status of a specific VM or LXC container (CPU, memory, disk, network I/O)",
+        annotations(read_only_hint = true, idempotent_hint = true)
+    )]
+    async fn proxmox_vm_status(
+        &self,
+        Parameters(args): Parameters<ProxmoxVmStatusArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.status")?;
+        let start = Instant::now();
+        let result = proxmox::vm_status(
+            self.manager.clone(),
+            args.host,
+            args.node,
+            args.vmid,
+            args.vm_type,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.status", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.vm.start",
+        description = "Start a Proxmox VM or LXC container",
+        annotations(destructive_hint = false, idempotent_hint = true)
+    )]
+    async fn proxmox_vm_start(
+        &self,
+        Parameters(args): Parameters<ProxmoxVmStartArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.start")?;
+        let start = Instant::now();
+        let result = proxmox::vm_start(
+            self.manager.clone(),
+            args.host,
+            args.node,
+            args.vmid,
+            args.vm_type,
+            args.dry_run,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.start", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.vm.stop",
+        description = "Force-stop a Proxmox VM or LXC container immediately. When confirmation is configured, this is a TWO-STEP operation: (1) Call this tool and get a confirmation token. (2) Call confirm_operation with that token and tool_name=\"proxmox.vm.stop\" to execute.",
+        annotations(destructive_hint = true)
+    )]
+    async fn proxmox_vm_stop(
+        &self,
+        Parameters(args): Parameters<ProxmoxVmStopArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.stop")?;
+        let start = Instant::now();
+        let result = proxmox::vm_stop(
+            self.manager.clone(),
+            self.confirmation.clone(),
+            args.host,
+            args.node,
+            args.vmid,
+            args.vm_type,
+            args.dry_run,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.stop", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.vm.create",
+        description = "Create a new Proxmox VM or LXC container. Use dry_run=true to preview. When confirmation is configured, this is a TWO-STEP operation: (1) Call this tool and get a confirmation token. (2) Call confirm_operation with that token and tool_name=\"proxmox.vm.create\" to execute.",
+        annotations(destructive_hint = true)
+    )]
+    async fn proxmox_vm_create(
+        &self,
+        Parameters(args): Parameters<ProxmoxVmCreateArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.create")?;
+        let start = Instant::now();
+        let result = proxmox::vm_create(
+            self.manager.clone(),
+            self.confirmation.clone(),
+            args.host,
+            args.node,
+            args.vmid,
+            args.vm_type,
+            args.name,
+            args.cores,
+            args.memory,
+            args.os_type,
+            args.template,
+            args.iso,
+            args.storage,
+            args.disk_size,
+            args.net,
+            args.dry_run,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.create", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.vm.clone",
+        description = "Clone an existing Proxmox VM from a template or existing VM. Supports full and linked clones.",
+        annotations(destructive_hint = false)
+    )]
+    async fn proxmox_vm_clone(
+        &self,
+        Parameters(args): Parameters<ProxmoxVmCloneArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.clone")?;
+        let start = Instant::now();
+        let result = proxmox::vm_clone(
+            self.manager.clone(),
+            args.host,
+            args.node,
+            args.vmid,
+            args.newid,
+            args.name,
+            args.full,
+            args.target_storage,
+            args.dry_run,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.clone", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.vm.delete",
+        description = "PERMANENTLY delete a Proxmox VM or LXC container. Use dry_run=true first. This is a TWO-STEP operation: (1) Returns a confirmation token. (2) Call confirm_operation with that token and tool_name=\"proxmox.vm.delete\" to execute.",
+        annotations(destructive_hint = true)
+    )]
+    async fn proxmox_vm_delete(
+        &self,
+        Parameters(args): Parameters<ProxmoxVmDeleteArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.delete")?;
+        let start = Instant::now();
+        let result = proxmox::vm_delete(
+            self.manager.clone(),
+            self.confirmation.clone(),
+            args.host,
+            args.node,
+            args.vmid,
+            args.vm_type,
+            args.purge,
+            args.dry_run,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.delete", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.vm.snapshot.list",
+        description = "List snapshots for a Proxmox VM or LXC container",
+        annotations(read_only_hint = true, idempotent_hint = true)
+    )]
+    async fn proxmox_snapshot_list(
+        &self,
+        Parameters(args): Parameters<ProxmoxSnapshotListArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.snapshot.list")?;
+        let start = Instant::now();
+        let result = proxmox::snapshot_list(
+            self.manager.clone(),
+            args.host,
+            args.node,
+            args.vmid,
+            args.vm_type,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.snapshot.list", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.vm.snapshot.create",
+        description = "Create a snapshot of a Proxmox VM or LXC container",
+        annotations(destructive_hint = false)
+    )]
+    async fn proxmox_snapshot_create(
+        &self,
+        Parameters(args): Parameters<ProxmoxSnapshotCreateArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.snapshot.create")?;
+        let start = Instant::now();
+        let result = proxmox::snapshot_create(
+            self.manager.clone(),
+            args.host,
+            args.node,
+            args.vmid,
+            args.vm_type,
+            args.snapname,
+            args.description,
+            args.vmstate,
+            args.dry_run,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.snapshot.create", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.vm.snapshot.rollback",
+        description = "Rollback a Proxmox VM or LXC container to a previous snapshot. WARNING: Current state will be lost. When confirmation is configured, this is a TWO-STEP operation: (1) Call this tool and get a confirmation token. (2) Call confirm_operation with that token and tool_name=\"proxmox.vm.snapshot.rollback\" to execute.",
+        annotations(destructive_hint = true)
+    )]
+    async fn proxmox_snapshot_rollback(
+        &self,
+        Parameters(args): Parameters<ProxmoxSnapshotRollbackArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.snapshot.rollback")?;
+        let start = Instant::now();
+        let result = proxmox::snapshot_rollback(
+            self.manager.clone(),
+            self.confirmation.clone(),
+            args.host,
+            args.node,
+            args.vmid,
+            args.vm_type,
+            args.snapname,
+            args.dry_run,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.snapshot.rollback", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.storage.list",
+        description = "List Proxmox storage pools with usage information (type, capacity, content types)",
+        annotations(read_only_hint = true, idempotent_hint = true)
+    )]
+    async fn proxmox_storage_list(
+        &self,
+        Parameters(args): Parameters<ProxmoxStorageListArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.storage.list")?;
+        let start = Instant::now();
+        let result = proxmox::storage_list(
+            self.manager.clone(),
+            args.host,
+            args.node,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.storage.list", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.network.list",
+        description = "List Proxmox network interfaces (bridges, VLANs, bonds, physical NICs)",
+        annotations(read_only_hint = true, idempotent_hint = true)
+    )]
+    async fn proxmox_network_list(
+        &self,
+        Parameters(args): Parameters<ProxmoxNetworkListArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.network.list")?;
+        let start = Instant::now();
+        let result = proxmox::network_list(
+            self.manager.clone(),
+            args.host,
+            args.node,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.network.list", start, result.is_err());
+        result
+    }
+
+    #[tool(
         name = "ssh.exec",
         description = "Execute a command on a remote host via SSH",
         annotations(destructive_hint = true, open_world_hint = true)
@@ -876,6 +1450,126 @@ impl HomelabMcpServer {
                     self.manager.clone(),
                     params.host.unwrap_or_else(|| "local".to_string()),
                     params.all.unwrap_or(false),
+                    self.audit.clone(),
+                )
+                .await
+                .map_err(|error| error.to_string())
+            }
+            "proxmox.vm.stop" => {
+                let params: ProxmoxVmStopArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
+                let host = params
+                    .host
+                    .map_or_else(|| proxmox::default_proxmox_host(&self.manager), Ok)
+                    .map_err(|error| error.to_string())?;
+                self.audit
+                    .log(
+                        "proxmox.vm.stop",
+                        &host,
+                        "confirmed_exec",
+                        Some(&params.vmid.to_string()),
+                    )
+                    .await
+                    .ok();
+                proxmox::vm_stop_confirmed(
+                    self.manager.clone(),
+                    host,
+                    params.node,
+                    params.vmid,
+                    params.vm_type,
+                    self.audit.clone(),
+                )
+                .await
+                .map_err(|error| error.to_string())
+            }
+            "proxmox.vm.create" => {
+                let params: ProxmoxVmCreateArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
+                let host = params
+                    .host
+                    .map_or_else(|| proxmox::default_proxmox_host(&self.manager), Ok)
+                    .map_err(|error| error.to_string())?;
+                self.audit
+                    .log(
+                        "proxmox.vm.create",
+                        &host,
+                        "confirmed_exec",
+                        params.name.as_deref(),
+                    )
+                    .await
+                    .ok();
+                proxmox::vm_create_confirmed(
+                    self.manager.clone(),
+                    host,
+                    params.node,
+                    params.vmid,
+                    params.vm_type.unwrap_or_else(|| "qemu".to_string()),
+                    params.name,
+                    params.cores,
+                    params.memory,
+                    params.os_type,
+                    params.template,
+                    params.iso,
+                    params.storage,
+                    params.disk_size,
+                    params.net,
+                    self.audit.clone(),
+                )
+                .await
+                .map_err(|error| error.to_string())
+            }
+            "proxmox.vm.delete" => {
+                let params: ProxmoxVmDeleteArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
+                let host = params
+                    .host
+                    .map_or_else(|| proxmox::default_proxmox_host(&self.manager), Ok)
+                    .map_err(|error| error.to_string())?;
+                self.audit
+                    .log(
+                        "proxmox.vm.delete",
+                        &host,
+                        "confirmed_exec",
+                        Some(&params.vmid.to_string()),
+                    )
+                    .await
+                    .ok();
+                proxmox::vm_delete_confirmed(
+                    self.manager.clone(),
+                    host,
+                    params.node,
+                    params.vmid,
+                    params.vm_type.unwrap_or_else(|| "qemu".to_string()),
+                    params.purge,
+                    self.audit.clone(),
+                )
+                .await
+                .map_err(|error| error.to_string())
+            }
+            "proxmox.vm.snapshot.rollback" => {
+                let params: ProxmoxSnapshotRollbackArgs =
+                    serde_json::from_str(&original_params_json)
+                        .map_err(|error| error.to_string())?;
+                let host = params
+                    .host
+                    .map_or_else(|| proxmox::default_proxmox_host(&self.manager), Ok)
+                    .map_err(|error| error.to_string())?;
+                self.audit
+                    .log(
+                        "proxmox.vm.snapshot.rollback",
+                        &host,
+                        "confirmed_exec",
+                        Some(&params.snapname),
+                    )
+                    .await
+                    .ok();
+                proxmox::snapshot_rollback_confirmed(
+                    self.manager.clone(),
+                    host,
+                    params.node,
+                    params.vmid,
+                    params.vm_type.unwrap_or_else(|| "qemu".to_string()),
+                    params.snapname,
                     self.audit.clone(),
                 )
                 .await

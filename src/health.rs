@@ -2,7 +2,7 @@ use anyhow::Result;
 use tracing::warn;
 
 use crate::config::Config;
-use crate::connection::DockerClient;
+use crate::connection::{DockerClient, ProxmoxClient};
 
 /// Run diagnostics and print results to stdout.
 pub async fn run_diagnostics(config: &Config) -> Result<()> {
@@ -39,14 +39,30 @@ pub async fn run_diagnostics(config: &Config) -> Result<()> {
         }
     }
 
+    println!("\nChecking Proxmox hosts:");
+    for (name, host) in &config.proxmox.hosts {
+        match check_proxmox_connection(host).await {
+            Ok(()) => {
+                println!("  ✓ Proxmox '{}': {} -> accessible", name, host.url);
+            }
+            Err(error) => {
+                println!("  ✗ Proxmox '{}': {} -> {}", name, host.url, error);
+                println!("    -> Check that the Proxmox API is reachable on port 8006");
+                println!("    -> Verify the token_id and token_secret are correct");
+                println!("    -> Set verify_tls = false for self-signed certificates");
+            }
+        }
+    }
+
     println!("\nChecking security configuration:");
     check_security_config(config);
 
     println!("\nConfiguration summary:");
     println!(
-        "  {} Docker hosts, {} SSH hosts",
+        "  {} Docker hosts, {} SSH hosts, {} Proxmox hosts",
         config.docker.hosts.len(),
-        config.ssh.hosts.len()
+        config.ssh.hosts.len(),
+        config.proxmox.hosts.len()
     );
     println!(
         "  SSH pool: max {} sessions, {} min lifetime, {} min idle, {}s keepalive",
@@ -101,6 +117,11 @@ async fn check_ssh_connection(host: &crate::config::SshHost) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn check_proxmox_connection(host: &crate::config::ProxmoxHost) -> Result<()> {
+    let proxmox = ProxmoxClient::new(host)?;
+    proxmox.validate().await
 }
 
 fn check_security_config(config: &Config) {
