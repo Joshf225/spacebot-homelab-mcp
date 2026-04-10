@@ -1580,6 +1580,663 @@ pub async fn storage_list(
     }
 }
 
+/// Helper function to format VM configuration in a human-readable grouped format
+fn format_vm_config(config: &Value, vm_type: &str, vmid: u64) -> String {
+    let mut lines = vec![format!(
+        "\n=== VM {} Configuration ({}) ===\n",
+        vmid,
+        vm_type.to_uppercase()
+    )];
+
+    // CPU configuration
+    let mut cpu_section = vec!["── CPU ──".to_string()];
+    if let Some(cores) = config.get("cores").and_then(Value::as_u64) {
+        cpu_section.push(format!("  Cores:         {}", cores));
+    }
+    if let Some(sockets) = config.get("sockets").and_then(Value::as_u64) {
+        cpu_section.push(format!("  Sockets:       {}", sockets));
+    }
+    if let Some(cpu_type) = config.get("cpu").and_then(Value::as_str) {
+        cpu_section.push(format!("  CPU type:      {}", cpu_type));
+    }
+    if let Some(cpulimit) = config.get("cpulimit").and_then(Value::as_f64) {
+        cpu_section.push(format!("  CPU limit:     {}", cpulimit));
+    }
+    if cpu_section.len() > 1 {
+        lines.extend(cpu_section);
+        lines.push(String::new());
+    }
+
+    // Memory configuration
+    let mut mem_section = vec!["── Memory ──".to_string()];
+    if let Some(memory) = config.get("memory").and_then(Value::as_u64) {
+        let memory_gb = memory as f64 / 1024.0;
+        mem_section.push(format!("  Memory:        {} MB ({:.1} GB)", memory, memory_gb));
+    }
+    if let Some(balloon) = config.get("balloon").and_then(Value::as_u64) {
+        if balloon > 0 {
+            let balloon_gb = balloon as f64 / 1024.0;
+            mem_section.push(format!(
+                "  Balloon (min):  {} MB ({:.1} GB)",
+                balloon, balloon_gb
+            ));
+        }
+    }
+    if let Some(swap) = config.get("swap").and_then(Value::as_u64) {
+        mem_section.push(format!("  Swap:          {} MB", swap));
+    }
+    if mem_section.len() > 1 {
+        lines.extend(mem_section);
+        lines.push(String::new());
+    }
+
+    // Disk configuration
+    let mut disk_section = vec!["── Disks ──".to_string()];
+    let disk_keys = vec![
+        "scsi0", "scsi1", "scsi2", "scsi3", "virtio0", "virtio1", "ide0", "ide1", "sata0", "sata1",
+        "rootfs", "mp0", "mp1", "mp2",
+    ];
+    let mut has_disks = false;
+    for key in &disk_keys {
+        if let Some(disk) = config.get(*key).and_then(Value::as_str) {
+            disk_section.push(format!("  {}:  {}", key, disk));
+            has_disks = true;
+        }
+    }
+    if has_disks {
+        lines.extend(disk_section);
+        lines.push(String::new());
+    }
+
+    // Network configuration
+    let mut net_section = vec!["── Network ──".to_string()];
+    let net_keys = vec!["net0", "net1", "net2", "net3"];
+    let mut has_nets = false;
+    for key in &net_keys {
+        if let Some(net) = config.get(*key).and_then(Value::as_str) {
+            net_section.push(format!("  {}:   {}", key, net));
+            has_nets = true;
+        }
+    }
+    if has_nets {
+        lines.extend(net_section);
+        lines.push(String::new());
+    }
+
+    // Cloud-init configuration (QEMU only)
+    if vm_type == "qemu" {
+        let mut cloud_init_section = vec!["── Cloud-Init ──".to_string()];
+        let mut has_cloud_init = false;
+
+        if let Some(ciuser) = config.get("ciuser").and_then(Value::as_str) {
+            cloud_init_section.push(format!("  User:          {}", ciuser));
+            has_cloud_init = true;
+        }
+        if config.get("cipassword").is_some() {
+            cloud_init_section.push("  Password:      (set)".to_string());
+            has_cloud_init = true;
+        }
+        if let Some(sshkeys) = config.get("sshkeys").and_then(Value::as_str) {
+            // Count keys (they're newline-separated when URL-encoded)
+            let key_count = sshkeys.matches("%0A").count() + 1;
+            cloud_init_section.push(format!("  SSH keys:      ({} keys configured)", key_count));
+            has_cloud_init = true;
+        }
+        if let Some(ipconfig0) = config.get("ipconfig0").and_then(Value::as_str) {
+            cloud_init_section.push(format!("  IP config 0:   {}", ipconfig0));
+            has_cloud_init = true;
+        }
+        if let Some(ipconfig1) = config.get("ipconfig1").and_then(Value::as_str) {
+            cloud_init_section.push(format!("  IP config 1:   {}", ipconfig1));
+            has_cloud_init = true;
+        }
+        if let Some(nameserver) = config.get("nameserver").and_then(Value::as_str) {
+            cloud_init_section.push(format!("  Nameserver:    {}", nameserver));
+            has_cloud_init = true;
+        }
+        if let Some(searchdomain) = config.get("searchdomain").and_then(Value::as_str) {
+            cloud_init_section.push(format!("  Search domain: {}", searchdomain));
+            has_cloud_init = true;
+        }
+
+        if has_cloud_init {
+            lines.extend(cloud_init_section);
+            lines.push(String::new());
+        }
+    }
+
+    // Boot configuration
+    let mut boot_section = vec!["── Boot ──".to_string()];
+    if let Some(boot) = config.get("boot").and_then(Value::as_str) {
+        boot_section.push(format!("  Boot order:    {}", boot));
+    }
+    if let Some(bootdisk) = config.get("bootdisk").and_then(Value::as_str) {
+        boot_section.push(format!("  Boot disk:     {}", bootdisk));
+    }
+    if let Some(ostype) = config.get("ostype").and_then(Value::as_str) {
+        boot_section.push(format!("  OS type:       {}", ostype));
+    }
+    if let Some(machine) = config.get("machine").and_then(Value::as_str) {
+        boot_section.push(format!("  Machine:       {}", machine));
+    }
+    if let Some(bios) = config.get("bios").and_then(Value::as_str) {
+        boot_section.push(format!("  BIOS:          {}", bios));
+    }
+    if boot_section.len() > 1 {
+        lines.extend(boot_section);
+        lines.push(String::new());
+    }
+
+    // Other important configuration
+    let mut other_section = vec!["── Other ──".to_string()];
+    if let Some(name) = config.get("name").and_then(Value::as_str) {
+        other_section.push(format!("  Name:          {}", name));
+    }
+    if let Some(description) = config.get("description").and_then(Value::as_str) {
+        other_section.push(format!("  Description:   {}", description));
+    }
+    if let Some(onboot) = config.get("onboot").and_then(Value::as_u64) {
+        other_section.push(format!(
+            "  Start on boot: {}",
+            if onboot == 1 { "yes" } else { "no" }
+        ));
+    }
+    if let Some(startup) = config.get("startup").and_then(Value::as_str) {
+        other_section.push(format!("  Startup order: {}", startup));
+    }
+    if other_section.len() > 1 {
+        lines.extend(other_section);
+        lines.push(String::new());
+    }
+
+    lines.join("\n")
+}
+
+pub async fn vm_config_get(
+    manager: Arc<ConnectionManager>,
+    host: Option<String>,
+    node: Option<String>,
+    vmid: u64,
+    vm_type: Option<String>,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
+    let result: Result<String> = async {
+        let client = manager.get_proxmox(&host)?;
+        let node_name = client.resolve_node(node.as_deref()).await?;
+        let vm_type = resolved_vm_type(vm_type.as_deref())?;
+        let path = format!("/nodes/{}/{}/{}/config", node_name, vm_type, vmid);
+        let config = client.get(&path).await?;
+
+        let formatted = format_vm_config(&config, vm_type, vmid);
+        Ok(formatted)
+    }
+    .await;
+
+    match result {
+        Ok(output) => {
+            audit
+                .log(
+                    "proxmox.vm.config.get",
+                    &host,
+                    "success",
+                    Some(&vmid.to_string()),
+                )
+                .await
+                .ok();
+            Ok(wrap_output_envelope("proxmox.vm.config.get", &output))
+        }
+        Err(error) => {
+            audit
+                .log(
+                    "proxmox.vm.config.get",
+                    &host,
+                    "error",
+                    Some(&error.to_string()),
+                )
+                .await
+                .ok();
+            Err(error)
+        }
+    }
+}
+
+pub async fn vm_config_update(
+    manager: Arc<ConnectionManager>,
+    confirmation: Arc<ConfirmationManager>,
+    host: Option<String>,
+    node: Option<String>,
+    vmid: u64,
+    vm_type: Option<String>,
+    // Core params
+    cores: Option<u32>,
+    sockets: Option<u32>,
+    memory: Option<u32>,
+    balloon: Option<u32>,
+    cpu_type: Option<String>,
+    name: Option<String>,
+    description: Option<String>,
+    onboot: Option<bool>,
+    // Cloud-init
+    ciuser: Option<String>,
+    cipassword: Option<String>,
+    sshkeys: Option<String>,
+    ipconfig0: Option<String>,
+    ipconfig1: Option<String>,
+    nameserver: Option<String>,
+    searchdomain: Option<String>,
+    // LXC
+    swap: Option<u32>,
+    cpulimit: Option<f64>,
+    unprivileged: Option<bool>,
+    // Advanced
+    boot: Option<String>,
+    ostype: Option<String>,
+    machine: Option<String>,
+    bios: Option<String>,
+    // Net/Disk raw
+    net0: Option<String>,
+    net1: Option<String>,
+    scsi0: Option<String>,
+    virtio0: Option<String>,
+    // Control
+    delete_keys: Option<String>,
+    dry_run: Option<bool>,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
+    let vm_type_str = vm_type.clone().unwrap_or_else(|| "qemu".to_string());
+    ensure_vm_type(&vm_type_str)?;
+
+    // Check if at least one param is provided
+    if cores.is_none()
+        && sockets.is_none()
+        && memory.is_none()
+        && balloon.is_none()
+        && cpu_type.is_none()
+        && name.is_none()
+        && description.is_none()
+        && onboot.is_none()
+        && ciuser.is_none()
+        && cipassword.is_none()
+        && sshkeys.is_none()
+        && ipconfig0.is_none()
+        && ipconfig1.is_none()
+        && nameserver.is_none()
+        && searchdomain.is_none()
+        && swap.is_none()
+        && cpulimit.is_none()
+        && unprivileged.is_none()
+        && boot.is_none()
+        && ostype.is_none()
+        && machine.is_none()
+        && bios.is_none()
+        && net0.is_none()
+        && net1.is_none()
+        && scsi0.is_none()
+        && virtio0.is_none()
+        && delete_keys.is_none()
+    {
+        return Err(anyhow!(
+            "No configuration parameters provided. Specify at least one parameter to change."
+        ));
+    }
+
+    if dry_run.unwrap_or(false) {
+        // For dry_run, just show what would be changed
+        let mut changes = vec![];
+        if cores.is_some() {
+            changes.push(format!("cores → {}", cores.unwrap()));
+        }
+        if memory.is_some() {
+            changes.push(format!("memory → {} MB", memory.unwrap()));
+        }
+        if sockets.is_some() {
+            changes.push(format!("sockets → {}", sockets.unwrap()));
+        }
+        if name.is_some() {
+            changes.push(format!("name → {}", name.as_ref().unwrap()));
+        }
+        if ciuser.is_some() {
+            changes.push(format!("ciuser → {}", ciuser.as_ref().unwrap()));
+        }
+        if ipconfig0.is_some() {
+            changes.push(format!("ipconfig0 → {}", ipconfig0.as_ref().unwrap()));
+        }
+
+        let output = format!(
+            "DRY RUN: Would UPDATE {} {} on Proxmox host '{}' with:\n  {}",
+            vm_type_str,
+            vmid,
+            host,
+            changes.join("\n  ")
+        );
+
+        audit
+            .log(
+                "proxmox.vm.config.update",
+                &host,
+                "dry_run",
+                Some(&vmid.to_string()),
+            )
+            .await
+            .ok();
+
+        return Ok(wrap_output_envelope("proxmox.vm.config.update", &output));
+    }
+
+    // Build confirmation preview
+    let mut preview_lines = vec![format!("\n⚠ Confirm: Update {} {} configuration\n", vm_type_str, vmid)];
+    preview_lines.push("Changes:".to_string());
+
+    if let Some(v) = &cores {
+        preview_lines.push(format!("  cores:       → {}", v));
+    }
+    if let Some(v) = &sockets {
+        preview_lines.push(format!("  sockets:     → {}", v));
+    }
+    if let Some(v) = &memory {
+        preview_lines.push(format!("  memory:      → {} MB", v));
+    }
+    if let Some(v) = &balloon {
+        preview_lines.push(format!("  balloon:     → {} MB", v));
+    }
+    if let Some(v) = &name {
+        preview_lines.push(format!("  name:        → {}", v));
+    }
+    if let Some(v) = &ciuser {
+        preview_lines.push(format!("  ciuser:      → {}", v));
+    }
+    if let Some(v) = &ipconfig0 {
+        preview_lines.push(format!("  ipconfig0:   → {}", v));
+    }
+    if let Some(v) = &ipconfig1 {
+        preview_lines.push(format!("  ipconfig1:   → {}", v));
+    }
+
+    preview_lines.push("\nUse confirm_operation to apply.".to_string());
+
+    // Store params for confirmation
+    let params_json = serde_json::json!({
+        "host": host.clone(),
+        "node": node.clone(),
+        "vmid": vmid,
+        "vm_type": vm_type_str.clone(),
+        "cores": cores,
+        "sockets": sockets,
+        "memory": memory,
+        "balloon": balloon,
+        "cpu_type": cpu_type,
+        "name": name,
+        "description": description,
+        "onboot": onboot,
+        "ciuser": ciuser,
+        "cipassword": cipassword,
+        "sshkeys": sshkeys,
+        "ipconfig0": ipconfig0,
+        "ipconfig1": ipconfig1,
+        "nameserver": nameserver,
+        "searchdomain": searchdomain,
+        "swap": swap,
+        "cpulimit": cpulimit,
+        "unprivileged": unprivileged,
+        "boot": boot,
+        "ostype": ostype,
+        "machine": machine,
+        "bios": bios,
+        "net0": net0,
+        "net1": net1,
+        "scsi0": scsi0,
+        "virtio0": virtio0,
+        "delete_keys": delete_keys,
+    })
+    .to_string();
+
+    if let Some(response) = confirmation
+        .check_and_maybe_require(
+            "proxmox.vm.config.update",
+            None,
+            &preview_lines.join("\n"),
+            &params_json,
+        )
+        .await?
+    {
+        audit
+            .log(
+                "proxmox.vm.config.update",
+                &host,
+                "confirmation_required",
+                Some(&vmid.to_string()),
+            )
+            .await
+            .ok();
+        return Ok(response);
+    }
+
+    vm_config_update_confirmed(
+        manager,
+        host,
+        node,
+        vmid,
+        vm_type_str,
+        cores,
+        sockets,
+        memory,
+        balloon,
+        cpu_type,
+        name,
+        description,
+        onboot,
+        ciuser,
+        cipassword,
+        sshkeys,
+        ipconfig0,
+        ipconfig1,
+        nameserver,
+        searchdomain,
+        swap,
+        cpulimit,
+        unprivileged,
+        boot,
+        ostype,
+        machine,
+        bios,
+        net0,
+        net1,
+        scsi0,
+        virtio0,
+        delete_keys,
+        audit,
+    )
+    .await
+}
+
+pub async fn vm_config_update_confirmed(
+    manager: Arc<ConnectionManager>,
+    host: String,
+    node: Option<String>,
+    vmid: u64,
+    vm_type: String,
+    cores: Option<u32>,
+    sockets: Option<u32>,
+    memory: Option<u32>,
+    balloon: Option<u32>,
+    cpu_type: Option<String>,
+    name: Option<String>,
+    description: Option<String>,
+    onboot: Option<bool>,
+    ciuser: Option<String>,
+    cipassword: Option<String>,
+    sshkeys: Option<String>,
+    ipconfig0: Option<String>,
+    ipconfig1: Option<String>,
+    nameserver: Option<String>,
+    searchdomain: Option<String>,
+    swap: Option<u32>,
+    cpulimit: Option<f64>,
+    unprivileged: Option<bool>,
+    boot: Option<String>,
+    ostype: Option<String>,
+    machine: Option<String>,
+    bios: Option<String>,
+    net0: Option<String>,
+    net1: Option<String>,
+    scsi0: Option<String>,
+    virtio0: Option<String>,
+    delete_keys: Option<String>,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let result: Result<String> = async {
+        let client = manager.get_proxmox(&host)?;
+        let node_name = client.resolve_node(node.as_deref()).await?;
+        let vm_type_resolved = resolved_vm_type(Some(&vm_type))?;
+        let path = format!("/nodes/{}/{}/{}/config", node_name, vm_type_resolved, vmid);
+
+        // Build parameter list
+        let mut params: Vec<(&str, String)> = Vec::new();
+        let cores_str;
+        let sockets_str;
+        let memory_str;
+        let balloon_str;
+        let swap_str;
+        let cpulimit_str;
+        let onboot_str;
+        let unprivileged_str;
+
+        if let Some(v) = cores {
+            cores_str = v.to_string();
+            params.push(("cores", cores_str.clone()));
+        }
+        if let Some(v) = sockets {
+            sockets_str = v.to_string();
+            params.push(("sockets", sockets_str.clone()));
+        }
+        if let Some(v) = memory {
+            memory_str = v.to_string();
+            params.push(("memory", memory_str.clone()));
+        }
+        if let Some(v) = balloon {
+            balloon_str = v.to_string();
+            params.push(("balloon", balloon_str.clone()));
+        }
+        if let Some(v) = cpu_type {
+            params.push(("cpu", v));
+        }
+        if let Some(v) = name {
+            params.push(("name", v));
+        }
+        if let Some(v) = description {
+            params.push(("description", v));
+        }
+        if let Some(v) = onboot {
+            onboot_str = bool_to_proxmox(v).to_string();
+            params.push(("onboot", onboot_str.clone()));
+        }
+        if let Some(v) = ciuser {
+            params.push(("ciuser", v));
+        }
+        if let Some(v) = cipassword {
+            params.push(("cipassword", v));
+        }
+        if let Some(v) = sshkeys {
+            // Form-urlencoded will handle encoding automatically
+            params.push(("sshkeys", v));
+        }
+        if let Some(v) = ipconfig0 {
+            params.push(("ipconfig0", v));
+        }
+        if let Some(v) = ipconfig1 {
+            params.push(("ipconfig1", v));
+        }
+        if let Some(v) = nameserver {
+            params.push(("nameserver", v));
+        }
+        if let Some(v) = searchdomain {
+            params.push(("searchdomain", v));
+        }
+        if let Some(v) = swap {
+            swap_str = v.to_string();
+            params.push(("swap", swap_str.clone()));
+        }
+        if let Some(v) = cpulimit {
+            cpulimit_str = v.to_string();
+            params.push(("cpulimit", cpulimit_str.clone()));
+        }
+        if let Some(v) = unprivileged {
+            unprivileged_str = bool_to_proxmox(v).to_string();
+            params.push(("unprivileged", unprivileged_str.clone()));
+        }
+        if let Some(v) = boot {
+            params.push(("boot", v));
+        }
+        if let Some(v) = ostype {
+            params.push(("ostype", v));
+        }
+        if let Some(v) = machine {
+            params.push(("machine", v));
+        }
+        if let Some(v) = bios {
+            params.push(("bios", v));
+        }
+        if let Some(v) = net0 {
+            params.push(("net0", v));
+        }
+        if let Some(v) = net1 {
+            params.push(("net1", v));
+        }
+        if let Some(v) = scsi0 {
+            params.push(("scsi0", v));
+        }
+        if let Some(v) = virtio0 {
+            params.push(("virtio0", v));
+        }
+        if let Some(v) = delete_keys {
+            params.push(("delete", v));
+        }
+
+        // Convert to &[(&str, &str)] for the API call
+        let param_refs: Vec<(&str, &str)> = params
+            .iter()
+            .map(|(k, v)| (*k, v.as_str()))
+            .collect();
+
+        let _response = client.put(&path, &param_refs).await?;
+
+        Ok(format!(
+            "Configuration updated successfully for {} {} on node '{}'.",
+            vm_type_resolved, vmid, node_name
+        ))
+    }
+    .await;
+
+    match result {
+        Ok(output) => {
+            audit
+                .log(
+                    "proxmox.vm.config.update",
+                    &host,
+                    "success",
+                    Some(&vmid.to_string()),
+                )
+                .await
+                .ok();
+            Ok(wrap_output_envelope("proxmox.vm.config.update", &output))
+        }
+        Err(error) => {
+            audit
+                .log(
+                    "proxmox.vm.config.update",
+                    &host,
+                    "error",
+                    Some(&error.to_string()),
+                )
+                .await
+                .ok();
+            Err(error)
+        }
+    }
+}
+
 pub async fn network_list(
     manager: Arc<ConnectionManager>,
     host: Option<String>,

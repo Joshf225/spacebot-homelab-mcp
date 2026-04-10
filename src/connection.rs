@@ -325,6 +325,36 @@ impl ProxmoxClient {
         Ok(body.get("data").cloned().unwrap_or(serde_json::Value::Null))
     }
 
+    /// PUT request to the Proxmox API (form-urlencoded body). Used for config updates.
+    pub async fn put(&self, path: &str, params: &[(&str, &str)]) -> Result<serde_json::Value> {
+        let url = format!("{}/api2/json{}", self.base_url, path);
+        let response = self
+            .client
+            .put(&url)
+            .header("Authorization", &self.auth_header)
+            .form(params)
+            .send()
+            .await
+            .map_err(|error| anyhow!("Proxmox API PUT failed: {}", error))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "Proxmox API error (HTTP {}): {}",
+                status.as_u16(),
+                body
+            ));
+        }
+
+        let body: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|error| anyhow!("Failed to parse Proxmox API response: {}", error))?;
+
+        Ok(body.get("data").cloned().unwrap_or(serde_json::Value::Null))
+    }
+
     /// Wait for a Proxmox async task (UPID) to complete.
     pub async fn wait_for_task(
         &self,

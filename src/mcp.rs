@@ -372,6 +372,86 @@ struct ProxmoxNetworkListArgs {
     pub node: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxVmConfigGetArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// VM/CT ID
+    pub vmid: u64,
+    /// "qemu" or "lxc" (defaults to "qemu")
+    pub vm_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxVmConfigUpdateArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// VM/CT ID
+    pub vmid: u64,
+    /// "qemu" or "lxc" (defaults to "qemu")
+    pub vm_type: Option<String>,
+    /// Number of CPU cores
+    pub cores: Option<u32>,
+    /// Number of CPU sockets
+    pub sockets: Option<u32>,
+    /// Memory in MB
+    pub memory: Option<u32>,
+    /// Memory balloon minimum in MB (0 to disable)
+    pub balloon: Option<u32>,
+    /// CPU type (e.g., "host", "kvm64")
+    pub cpu_type: Option<String>,
+    /// VM/CT name/hostname
+    pub name: Option<String>,
+    /// VM/CT description
+    pub description: Option<String>,
+    /// Start on host boot
+    pub onboot: Option<bool>,
+    /// Cloud-init: default user
+    pub ciuser: Option<String>,
+    /// Cloud-init: default password
+    pub cipassword: Option<String>,
+    /// Cloud-init: authorized SSH keys (newline-separated)
+    pub sshkeys: Option<String>,
+    /// Cloud-init: IP config for eth0 (e.g., "ip=10.0.0.50/24,gw=10.0.0.1")
+    pub ipconfig0: Option<String>,
+    /// Cloud-init: IP config for eth1
+    pub ipconfig1: Option<String>,
+    /// Cloud-init: DNS nameservers
+    pub nameserver: Option<String>,
+    /// Cloud-init: DNS search domain
+    pub searchdomain: Option<String>,
+    /// LXC: Swap memory in MB
+    pub swap: Option<u32>,
+    /// LXC: CPU limit (fractional cores)
+    pub cpulimit: Option<f64>,
+    /// LXC: Unprivileged container mode
+    pub unprivileged: Option<bool>,
+    /// Boot order (e.g., "order=scsi0;net0")
+    pub boot: Option<String>,
+    /// Guest OS type hint
+    pub ostype: Option<String>,
+    /// Machine type (e.g., "q35", "i440fx")
+    pub machine: Option<String>,
+    /// BIOS type (seabios/ovmf)
+    pub bios: Option<String>,
+    /// Network interface 0 (full specification string)
+    pub net0: Option<String>,
+    /// Network interface 1 (full specification string)
+    pub net1: Option<String>,
+    /// SCSI disk 0 (full specification string)
+    pub scsi0: Option<String>,
+    /// Virtio disk 0 (full specification string)
+    pub virtio0: Option<String>,
+    /// Comma-separated config keys to delete
+    pub delete_keys: Option<String>,
+    /// Preview changes without applying (recommended: use dry_run=true first)
+    pub dry_run: Option<bool>,
+}
+
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for HomelabMcpServer {
     fn get_info(&self) -> ServerInfo {
@@ -459,6 +539,8 @@ impl HomelabMcpServer {
         ("proxmox.vm.create", "Proxmox"),
         ("proxmox.vm.clone", "Proxmox"),
         ("proxmox.vm.delete", "Proxmox"),
+        ("proxmox.vm.config.get", "Proxmox"),
+        ("proxmox.vm.config.update", "Proxmox"),
         ("proxmox.vm.snapshot.list", "Proxmox"),
         ("proxmox.vm.snapshot.create", "Proxmox"),
         ("proxmox.vm.snapshot.rollback", "Proxmox"),
@@ -1099,6 +1181,85 @@ impl HomelabMcpServer {
     }
 
     #[tool(
+        name = "proxmox.vm.config.get",
+        description = "Read the current configuration of a Proxmox VM or LXC container. Returns CPU, memory, disk, network, cloud-init, and boot settings in a categorized format. Use this to inspect a VM before making changes.",
+        annotations(read_only_hint = true, idempotent_hint = true)
+    )]
+    async fn proxmox_vm_config_get(
+        &self,
+        Parameters(args): Parameters<ProxmoxVmConfigGetArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.config.get")?;
+        let start = Instant::now();
+        let result = proxmox::vm_config_get(
+            self.manager.clone(),
+            args.host,
+            args.node,
+            args.vmid,
+            args.vm_type,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.config.get", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.vm.config.update",
+        description = "Update the configuration of an existing Proxmox VM or LXC container. Change CPU cores, memory, network, cloud-init settings (IP, user, SSH keys), and more. Only specify the parameters you want to change. This is a TWO-STEP operation: (1) Returns a confirmation token. (2) Call confirm_operation with that token and tool_name=\"proxmox.vm.config.update\" to execute.",
+        annotations(destructive_hint = true)
+    )]
+    async fn proxmox_vm_config_update(
+        &self,
+        Parameters(args): Parameters<ProxmoxVmConfigUpdateArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.config.update")?;
+        let start = Instant::now();
+        let result = proxmox::vm_config_update(
+            self.manager.clone(),
+            self.confirmation.clone(),
+            args.host,
+            args.node,
+            args.vmid,
+            args.vm_type,
+            args.cores,
+            args.sockets,
+            args.memory,
+            args.balloon,
+            args.cpu_type,
+            args.name,
+            args.description,
+            args.onboot,
+            args.ciuser,
+            args.cipassword,
+            args.sshkeys,
+            args.ipconfig0,
+            args.ipconfig1,
+            args.nameserver,
+            args.searchdomain,
+            args.swap,
+            args.cpulimit,
+            args.unprivileged,
+            args.boot,
+            args.ostype,
+            args.machine,
+            args.bios,
+            args.net0,
+            args.net1,
+            args.scsi0,
+            args.virtio0,
+            args.delete_keys,
+            args.dry_run,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.config.update", start, result.is_err());
+        result
+    }
+
+    #[tool(
         name = "proxmox.vm.snapshot.list",
         description = "List snapshots for a Proxmox VM or LXC container",
         annotations(read_only_hint = true, idempotent_hint = true)
@@ -1541,6 +1702,60 @@ impl HomelabMcpServer {
                     params.vmid,
                     params.vm_type.unwrap_or_else(|| "qemu".to_string()),
                     params.purge,
+                    self.audit.clone(),
+                )
+                .await
+                .map_err(|error| error.to_string())
+            }
+            "proxmox.vm.config.update" => {
+                let params: ProxmoxVmConfigUpdateArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
+                let host = params
+                    .host
+                    .map_or_else(|| proxmox::default_proxmox_host(&self.manager), Ok)
+                    .map_err(|error| error.to_string())?;
+                self.audit
+                    .log(
+                        "proxmox.vm.config.update",
+                        &host,
+                        "confirmed_exec",
+                        Some(&params.vmid.to_string()),
+                    )
+                    .await
+                    .ok();
+                proxmox::vm_config_update_confirmed(
+                    self.manager.clone(),
+                    host,
+                    params.node,
+                    params.vmid,
+                    params.vm_type.unwrap_or_else(|| "qemu".to_string()),
+                    params.cores,
+                    params.sockets,
+                    params.memory,
+                    params.balloon,
+                    params.cpu_type,
+                    params.name,
+                    params.description,
+                    params.onboot,
+                    params.ciuser,
+                    params.cipassword,
+                    params.sshkeys,
+                    params.ipconfig0,
+                    params.ipconfig1,
+                    params.nameserver,
+                    params.searchdomain,
+                    params.swap,
+                    params.cpulimit,
+                    params.unprivileged,
+                    params.boot,
+                    params.ostype,
+                    params.machine,
+                    params.bios,
+                    params.net0,
+                    params.net1,
+                    params.scsi0,
+                    params.virtio0,
+                    params.delete_keys,
                     self.audit.clone(),
                 )
                 .await
