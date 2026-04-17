@@ -1611,7 +1611,10 @@ fn format_vm_config(config: &Value, vm_type: &str, vmid: u64) -> String {
     let mut mem_section = vec!["── Memory ──".to_string()];
     if let Some(memory) = config.get("memory").and_then(Value::as_u64) {
         let memory_gb = memory as f64 / 1024.0;
-        mem_section.push(format!("  Memory:        {} MB ({:.1} GB)", memory, memory_gb));
+        mem_section.push(format!(
+            "  Memory:        {} MB ({:.1} GB)",
+            memory, memory_gb
+        ));
     }
     if let Some(balloon) = config.get("balloon").and_then(Value::as_u64) {
         if balloon > 0 {
@@ -1926,7 +1929,10 @@ pub async fn vm_config_update(
     }
 
     // Build confirmation preview
-    let mut preview_lines = vec![format!("\n⚠ Confirm: Update {} {} configuration\n", vm_type_str, vmid)];
+    let mut preview_lines = vec![format!(
+        "\n⚠ Confirm: Update {} {} configuration\n",
+        vm_type_str, vmid
+    )];
     preview_lines.push("Changes:".to_string());
 
     if let Some(v) = &cores {
@@ -2195,10 +2201,7 @@ pub async fn vm_config_update_confirmed(
         }
 
         // Convert to &[(&str, &str)] for the API call
-        let param_refs: Vec<(&str, &str)> = params
-            .iter()
-            .map(|(k, v)| (*k, v.as_str()))
-            .collect();
+        let param_refs: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
         let _response = client.put(&path, &param_refs).await?;
 
@@ -2255,12 +2258,22 @@ pub async fn backup_create(
     let mode = mode.unwrap_or_else(|| "snapshot".to_string());
     match mode.as_str() {
         "snapshot" | "suspend" | "stop" => {}
-        other => return Err(anyhow!("mode must be 'snapshot', 'suspend', or 'stop'. Got '{}'", other)),
+        other => {
+            return Err(anyhow!(
+                "mode must be 'snapshot', 'suspend', or 'stop'. Got '{}'",
+                other
+            ));
+        }
     }
     if let Some(ref c) = compress {
         match c.as_str() {
             "zstd" | "lzo" | "gzip" | "0" => {}
-            other => return Err(anyhow!("compress must be 'zstd', 'lzo', 'gzip', or '0'. Got '{}'", other)),
+            other => {
+                return Err(anyhow!(
+                    "compress must be 'zstd', 'lzo', 'gzip', or '0'. Got '{}'",
+                    other
+                ));
+            }
         }
     }
 
@@ -2537,10 +2550,8 @@ pub async fn backup_restore_confirmed(
         let node_name = client.resolve_node(node.as_deref()).await?;
         let vm_type_resolved = resolved_vm_type(Some(&vm_type))?;
 
-        let mut params: Vec<(&str, String)> = vec![
-            ("vmid", vmid.to_string()),
-            ("archive", archive.clone()),
-        ];
+        let mut params: Vec<(&str, String)> =
+            vec![("vmid", vmid.to_string()), ("archive", archive.clone())];
         if let Some(ref s) = storage {
             params.push(("storage", s.clone()));
         }
@@ -2896,22 +2907,44 @@ pub async fn network_create(
         let node_name = client.resolve_node(node.as_deref()).await?;
         let path = format!("/nodes/{}/network", node_name);
 
-        let mut params: Vec<(&str, String)> = vec![
-            ("iface", iface.clone()),
-            ("type", iface_type.clone()),
-        ];
-        if let Some(ref v) = address { params.push(("address", v.clone())); }
-        if let Some(ref v) = netmask { params.push(("netmask", v.clone())); }
-        if let Some(ref v) = gateway { params.push(("gateway", v.clone())); }
-        if let Some(ref v) = address6 { params.push(("address6", v.clone())); }
-        if let Some(ref v) = netmask6 { params.push(("netmask6", v.clone())); }
-        if let Some(ref v) = gateway6 { params.push(("gateway6", v.clone())); }
-        if let Some(ref v) = bridge_ports { params.push(("bridge_ports", v.clone())); }
-        if let Some(ref v) = bond_mode { params.push(("bond_mode", v.clone())); }
-        if let Some(v) = vlan_id { params.push(("vlan-id", v.to_string())); }
-        if let Some(ref v) = vlan_raw_device { params.push(("vlan-raw-device", v.clone())); }
-        if let Some(v) = autostart { params.push(("autostart", if v { "1" } else { "0" }.to_string())); }
-        if let Some(ref v) = comments { params.push(("comments", v.clone())); }
+        let mut params: Vec<(&str, String)> =
+            vec![("iface", iface.clone()), ("type", iface_type.clone())];
+        if let Some(ref v) = address {
+            params.push(("address", v.clone()));
+        }
+        if let Some(ref v) = netmask {
+            params.push(("netmask", v.clone()));
+        }
+        if let Some(ref v) = gateway {
+            params.push(("gateway", v.clone()));
+        }
+        if let Some(ref v) = address6 {
+            params.push(("address6", v.clone()));
+        }
+        if let Some(ref v) = netmask6 {
+            params.push(("netmask6", v.clone()));
+        }
+        if let Some(ref v) = gateway6 {
+            params.push(("gateway6", v.clone()));
+        }
+        if let Some(ref v) = bridge_ports {
+            params.push(("bridge_ports", v.clone()));
+        }
+        if let Some(ref v) = bond_mode {
+            params.push(("bond_mode", v.clone()));
+        }
+        if let Some(v) = vlan_id {
+            params.push(("vlan-id", v.to_string()));
+        }
+        if let Some(ref v) = vlan_raw_device {
+            params.push(("vlan-raw-device", v.clone()));
+        }
+        if let Some(v) = autostart {
+            params.push(("autostart", if v { "1" } else { "0" }.to_string()));
+        }
+        if let Some(ref v) = comments {
+            params.push(("comments", v.clone()));
+        }
 
         let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
         client.post(&path, &params_ref).await?;
@@ -3031,8 +3064,24 @@ pub async fn network_update(
     }
 
     network_update_confirmed(
-        manager, host, node, iface, address, netmask, gateway, address6, netmask6, gateway6,
-        bridge_ports, bond_mode, vlan_id, vlan_raw_device, autostart, comments, iface_type, audit,
+        manager,
+        host,
+        node,
+        iface,
+        address,
+        netmask,
+        gateway,
+        address6,
+        netmask6,
+        gateway6,
+        bridge_ports,
+        bond_mode,
+        vlan_id,
+        vlan_raw_device,
+        autostart,
+        comments,
+        iface_type,
+        audit,
     )
     .await
 }
@@ -3064,19 +3113,45 @@ pub async fn network_update_confirmed(
         let path = format!("/nodes/{}/network/{}", node_name, iface);
 
         let mut params: Vec<(&str, String)> = Vec::new();
-        if let Some(ref v) = iface_type { params.push(("type", v.clone())); }
-        if let Some(ref v) = address { params.push(("address", v.clone())); }
-        if let Some(ref v) = netmask { params.push(("netmask", v.clone())); }
-        if let Some(ref v) = gateway { params.push(("gateway", v.clone())); }
-        if let Some(ref v) = address6 { params.push(("address6", v.clone())); }
-        if let Some(ref v) = netmask6 { params.push(("netmask6", v.clone())); }
-        if let Some(ref v) = gateway6 { params.push(("gateway6", v.clone())); }
-        if let Some(ref v) = bridge_ports { params.push(("bridge_ports", v.clone())); }
-        if let Some(ref v) = bond_mode { params.push(("bond_mode", v.clone())); }
-        if let Some(v) = vlan_id { params.push(("vlan-id", v.to_string())); }
-        if let Some(ref v) = vlan_raw_device { params.push(("vlan-raw-device", v.clone())); }
-        if let Some(v) = autostart { params.push(("autostart", if v { "1" } else { "0" }.to_string())); }
-        if let Some(ref v) = comments { params.push(("comments", v.clone())); }
+        if let Some(ref v) = iface_type {
+            params.push(("type", v.clone()));
+        }
+        if let Some(ref v) = address {
+            params.push(("address", v.clone()));
+        }
+        if let Some(ref v) = netmask {
+            params.push(("netmask", v.clone()));
+        }
+        if let Some(ref v) = gateway {
+            params.push(("gateway", v.clone()));
+        }
+        if let Some(ref v) = address6 {
+            params.push(("address6", v.clone()));
+        }
+        if let Some(ref v) = netmask6 {
+            params.push(("netmask6", v.clone()));
+        }
+        if let Some(ref v) = gateway6 {
+            params.push(("gateway6", v.clone()));
+        }
+        if let Some(ref v) = bridge_ports {
+            params.push(("bridge_ports", v.clone()));
+        }
+        if let Some(ref v) = bond_mode {
+            params.push(("bond_mode", v.clone()));
+        }
+        if let Some(v) = vlan_id {
+            params.push(("vlan-id", v.to_string()));
+        }
+        if let Some(ref v) = vlan_raw_device {
+            params.push(("vlan-raw-device", v.clone()));
+        }
+        if let Some(v) = autostart {
+            params.push(("autostart", if v { "1" } else { "0" }.to_string()));
+        }
+        if let Some(ref v) = comments {
+            params.push(("comments", v.clone()));
+        }
 
         let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
         client.put(&path, &params_ref).await?;

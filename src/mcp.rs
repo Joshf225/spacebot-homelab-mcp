@@ -2130,9 +2130,8 @@ impl HomelabMcpServer {
                 .map_err(|error| error.to_string())
             }
             "proxmox.vm.backup.restore" => {
-                let params: ProxmoxBackupRestoreArgs =
-                    serde_json::from_str(&original_params_json)
-                        .map_err(|error| error.to_string())?;
+                let params: ProxmoxBackupRestoreArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
                 let host = params
                     .host
                     .map_or_else(|| proxmox::default_proxmox_host(&self.manager), Ok)
@@ -2189,9 +2188,8 @@ impl HomelabMcpServer {
                 .map_err(|error| error.to_string())
             }
             "proxmox.network.update" => {
-                let params: ProxmoxNetworkUpdateArgs =
-                    serde_json::from_str(&original_params_json)
-                        .map_err(|error| error.to_string())?;
+                let params: ProxmoxNetworkUpdateArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
                 let host = params
                     .host
                     .as_ref()
@@ -2231,9 +2229,8 @@ impl HomelabMcpServer {
                 .map_err(|error| error.to_string())
             }
             "proxmox.network.delete" => {
-                let params: ProxmoxNetworkDeleteArgs =
-                    serde_json::from_str(&original_params_json)
-                        .map_err(|error| error.to_string())?;
+                let params: ProxmoxNetworkDeleteArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
                 let host = params
                     .host
                     .as_ref()
@@ -2260,9 +2257,8 @@ impl HomelabMcpServer {
                 .map_err(|error| error.to_string())
             }
             "proxmox.network.apply" => {
-                let params: ProxmoxNetworkApplyArgs =
-                    serde_json::from_str(&original_params_json)
-                        .map_err(|error| error.to_string())?;
+                let params: ProxmoxNetworkApplyArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
                 let host = params
                     .host
                     .as_ref()
@@ -2270,12 +2266,7 @@ impl HomelabMcpServer {
                     .unwrap_or_else(|| proxmox::default_proxmox_host(&self.manager))
                     .map_err(|error| error.to_string())?;
                 self.audit
-                    .log(
-                        "proxmox.network.apply",
-                        &host,
-                        "confirmed_exec",
-                        None,
-                    )
+                    .log("proxmox.network.apply", &host, "confirmed_exec", None)
                     .await
                     .ok();
                 proxmox::network_apply_confirmed(
