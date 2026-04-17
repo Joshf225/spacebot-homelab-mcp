@@ -365,11 +365,245 @@ struct ProxmoxStorageListArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxBackupCreateArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// VM/CT ID to back up
+    pub vmid: u64,
+    /// Storage pool to store the backup (e.g. "local", "nfs-backups")
+    pub storage: String,
+    /// Backup mode: "snapshot" (no downtime, default), "suspend", or "stop"
+    pub mode: Option<String>,
+    /// Compression algorithm: "zstd" (recommended), "lzo", "gzip", or "0" (none)
+    pub compress: Option<String>,
+    /// Optional notes/description for the backup
+    pub notes: Option<String>,
+    /// Preview without executing
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxBackupListArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// Storage pool to query for backups (e.g. "local", "nfs-backups")
+    pub storage: String,
+    /// Filter backups by VM/CT ID (optional)
+    pub vmid: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxBackupRestoreArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// Backup volume ID to restore from (e.g. "local:backup/vzdump-qemu-100-2024_01_01-00_00_00.vma.zst")
+    pub archive: String,
+    /// Target VM/CT ID for the restored machine
+    pub vmid: u64,
+    /// Target storage for restored disks (optional, uses original if omitted)
+    pub storage: Option<String>,
+    /// "qemu" or "lxc" (defaults to "qemu")
+    pub vm_type: Option<String>,
+    /// Preview without executing
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 struct ProxmoxNetworkListArgs {
     /// Proxmox host name from config
     pub host: Option<String>,
     /// Node name
     pub node: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxNetworkCreateArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// Interface name (e.g. "vmbr1", "bond0", "eno1.100")
+    pub iface: String,
+    /// Interface type: "bridge", "bond", "vlan", "OVSBridge", "OVSBond", "OVSPort", "OVSIntPort"
+    #[serde(rename = "type")]
+    pub iface_type: String,
+    /// IPv4 address (e.g. "10.0.0.1")
+    pub address: Option<String>,
+    /// IPv4 netmask (e.g. "255.255.255.0")
+    pub netmask: Option<String>,
+    /// IPv4 gateway
+    pub gateway: Option<String>,
+    /// IPv6 address
+    pub address6: Option<String>,
+    /// IPv6 netmask (prefix length as string, e.g. "64")
+    pub netmask6: Option<String>,
+    /// IPv6 gateway
+    pub gateway6: Option<String>,
+    /// Member interfaces for bridge types (e.g. "eno2" or "bond0")
+    pub bridge_ports: Option<String>,
+    /// Slave interfaces for bond types (e.g. "eno1 eno2")
+    pub slaves: Option<String>,
+    /// Bond mode (e.g. "balance-rr", "active-backup", "802.3ad")
+    pub bond_mode: Option<String>,
+    /// VLAN tag ID (1-4094)
+    pub vlan_id: Option<u32>,
+    /// Raw device for VLAN (e.g. "eno1")
+    pub vlan_raw_device: Option<String>,
+    /// Start interface on boot
+    pub autostart: Option<bool>,
+    /// Comments/description
+    pub comments: Option<String>,
+    /// Preview without executing
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxNetworkUpdateArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// Interface name to modify (e.g. "vmbr0", "bond0")
+    pub iface: String,
+    /// IPv4 address (e.g. "10.0.0.1")
+    pub address: Option<String>,
+    /// IPv4 netmask (e.g. "255.255.255.0")
+    pub netmask: Option<String>,
+    /// IPv4 gateway
+    pub gateway: Option<String>,
+    /// IPv6 address
+    pub address6: Option<String>,
+    /// IPv6 netmask (prefix length as string, e.g. "64")
+    pub netmask6: Option<String>,
+    /// IPv6 gateway
+    pub gateway6: Option<String>,
+    /// Member interfaces for bridge types (e.g. "eno2" or "bond0")
+    pub bridge_ports: Option<String>,
+    /// Slave interfaces for bond types (e.g. "eno1 eno2")
+    pub slaves: Option<String>,
+    /// Bond mode (e.g. "balance-rr", "active-backup", "802.3ad")
+    pub bond_mode: Option<String>,
+    /// VLAN tag ID (1-4094)
+    pub vlan_id: Option<u32>,
+    /// Raw device for VLAN (e.g. "eno1")
+    pub vlan_raw_device: Option<String>,
+    /// Start interface on boot
+    pub autostart: Option<bool>,
+    /// Comments/description
+    pub comments: Option<String>,
+    /// Interface type (e.g. "bridge", "bond", "vlan")
+    #[serde(rename = "type")]
+    pub iface_type: Option<String>,
+    /// Preview without executing
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxNetworkDeleteArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// Interface name to delete (e.g. "vmbr1")
+    pub iface: String,
+    /// Preview without executing
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxNetworkApplyArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// Preview without executing
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxVmConfigGetArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// VM/CT ID
+    pub vmid: u64,
+    /// "qemu" or "lxc" (defaults to "qemu")
+    pub vm_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProxmoxVmConfigUpdateArgs {
+    /// Proxmox host name from config. Defaults only when exactly one host is configured; multiple-host setups must pass host explicitly.
+    pub host: Option<String>,
+    /// Node name
+    pub node: Option<String>,
+    /// VM/CT ID
+    pub vmid: u64,
+    /// "qemu" or "lxc" (defaults to "qemu")
+    pub vm_type: Option<String>,
+    /// Number of CPU cores
+    pub cores: Option<u32>,
+    /// Number of CPU sockets
+    pub sockets: Option<u32>,
+    /// Memory in MB
+    pub memory: Option<u32>,
+    /// Memory balloon minimum in MB (0 to disable)
+    pub balloon: Option<u32>,
+    /// CPU type (e.g., "host", "kvm64")
+    pub cpu_type: Option<String>,
+    /// VM/CT name/hostname
+    pub name: Option<String>,
+    /// VM/CT description
+    pub description: Option<String>,
+    /// Start on host boot
+    pub onboot: Option<bool>,
+    /// Cloud-init: default user
+    pub ciuser: Option<String>,
+    /// Cloud-init: default password
+    pub cipassword: Option<String>,
+    /// Cloud-init: authorized SSH keys (newline-separated)
+    pub sshkeys: Option<String>,
+    /// Cloud-init: IP config for eth0 (e.g., "ip=10.0.0.50/24,gw=10.0.0.1")
+    pub ipconfig0: Option<String>,
+    /// Cloud-init: IP config for eth1
+    pub ipconfig1: Option<String>,
+    /// Cloud-init: DNS nameservers
+    pub nameserver: Option<String>,
+    /// Cloud-init: DNS search domain
+    pub searchdomain: Option<String>,
+    /// LXC: Swap memory in MB
+    pub swap: Option<u32>,
+    /// LXC: CPU limit (fractional cores)
+    pub cpulimit: Option<f64>,
+    /// LXC: Unprivileged container mode
+    pub unprivileged: Option<bool>,
+    /// Boot order (e.g., "order=scsi0;net0")
+    pub boot: Option<String>,
+    /// Guest OS type hint
+    pub ostype: Option<String>,
+    /// Machine type (e.g., "q35", "i440fx")
+    pub machine: Option<String>,
+    /// BIOS type (seabios/ovmf)
+    pub bios: Option<String>,
+    /// Network interface 0 (full specification string)
+    pub net0: Option<String>,
+    /// Network interface 1 (full specification string)
+    pub net1: Option<String>,
+    /// SCSI disk 0 (full specification string)
+    pub scsi0: Option<String>,
+    /// Virtio disk 0 (full specification string)
+    pub virtio0: Option<String>,
+    /// Comma-separated config keys to delete
+    pub delete_keys: Option<String>,
+    /// Preview changes without applying (recommended: use dry_run=true first)
+    pub dry_run: Option<bool>,
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -459,11 +693,20 @@ impl HomelabMcpServer {
         ("proxmox.vm.create", "Proxmox"),
         ("proxmox.vm.clone", "Proxmox"),
         ("proxmox.vm.delete", "Proxmox"),
+        ("proxmox.vm.config.get", "Proxmox"),
+        ("proxmox.vm.config.update", "Proxmox"),
         ("proxmox.vm.snapshot.list", "Proxmox"),
         ("proxmox.vm.snapshot.create", "Proxmox"),
         ("proxmox.vm.snapshot.rollback", "Proxmox"),
+        ("proxmox.vm.backup.create", "Proxmox"),
+        ("proxmox.vm.backup.list", "Proxmox"),
+        ("proxmox.vm.backup.restore", "Proxmox"),
         ("proxmox.storage.list", "Proxmox"),
         ("proxmox.network.list", "Proxmox"),
+        ("proxmox.network.create", "Proxmox"),
+        ("proxmox.network.update", "Proxmox"),
+        ("proxmox.network.delete", "Proxmox"),
+        ("proxmox.network.apply", "Proxmox"),
         ("ssh.exec", "SSH"),
         ("ssh.upload", "SSH"),
         ("ssh.download", "SSH"),
@@ -1099,6 +1342,85 @@ impl HomelabMcpServer {
     }
 
     #[tool(
+        name = "proxmox.vm.config.get",
+        description = "Read the current configuration of a Proxmox VM or LXC container. Returns CPU, memory, disk, network, cloud-init, and boot settings in a categorized format. Use this to inspect a VM before making changes.",
+        annotations(read_only_hint = true, idempotent_hint = true)
+    )]
+    async fn proxmox_vm_config_get(
+        &self,
+        Parameters(args): Parameters<ProxmoxVmConfigGetArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.config.get")?;
+        let start = Instant::now();
+        let result = proxmox::vm_config_get(
+            self.manager.clone(),
+            args.host,
+            args.node,
+            args.vmid,
+            args.vm_type,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.config.get", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.vm.config.update",
+        description = "Update the configuration of an existing Proxmox VM or LXC container. Change CPU cores, memory, network, cloud-init settings (IP, user, SSH keys), and more. Only specify the parameters you want to change. This is a TWO-STEP operation: (1) Returns a confirmation token. (2) Call confirm_operation with that token and tool_name=\"proxmox.vm.config.update\" to execute.",
+        annotations(destructive_hint = true)
+    )]
+    async fn proxmox_vm_config_update(
+        &self,
+        Parameters(args): Parameters<ProxmoxVmConfigUpdateArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.config.update")?;
+        let start = Instant::now();
+        let result = proxmox::vm_config_update(
+            self.manager.clone(),
+            self.confirmation.clone(),
+            args.host,
+            args.node,
+            args.vmid,
+            args.vm_type,
+            args.cores,
+            args.sockets,
+            args.memory,
+            args.balloon,
+            args.cpu_type,
+            args.name,
+            args.description,
+            args.onboot,
+            args.ciuser,
+            args.cipassword,
+            args.sshkeys,
+            args.ipconfig0,
+            args.ipconfig1,
+            args.nameserver,
+            args.searchdomain,
+            args.swap,
+            args.cpulimit,
+            args.unprivileged,
+            args.boot,
+            args.ostype,
+            args.machine,
+            args.bios,
+            args.net0,
+            args.net1,
+            args.scsi0,
+            args.virtio0,
+            args.delete_keys,
+            args.dry_run,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.config.update", start, result.is_err());
+        result
+    }
+
+    #[tool(
         name = "proxmox.vm.snapshot.list",
         description = "List snapshots for a Proxmox VM or LXC container",
         annotations(read_only_hint = true, idempotent_hint = true)
@@ -1181,6 +1503,89 @@ impl HomelabMcpServer {
     }
 
     #[tool(
+        name = "proxmox.vm.backup.create",
+        description = "Create a vzdump backup of a Proxmox VM or LXC container. Choose storage pool, backup mode (snapshot for no downtime), and compression (zstd recommended).",
+        annotations(destructive_hint = false)
+    )]
+    async fn proxmox_backup_create(
+        &self,
+        Parameters(args): Parameters<ProxmoxBackupCreateArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.backup.create")?;
+        let start = Instant::now();
+        let result = proxmox::backup_create(
+            self.manager.clone(),
+            args.host,
+            args.node,
+            args.vmid,
+            args.storage,
+            args.mode,
+            args.compress,
+            args.notes,
+            args.dry_run,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.backup.create", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.vm.backup.list",
+        description = "List vzdump backups on a Proxmox storage pool. Optionally filter by VM ID. Shows volume ID, size, format, and notes.",
+        annotations(read_only_hint = true, idempotent_hint = true)
+    )]
+    async fn proxmox_backup_list(
+        &self,
+        Parameters(args): Parameters<ProxmoxBackupListArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.backup.list")?;
+        let start = Instant::now();
+        let result = proxmox::backup_list(
+            self.manager.clone(),
+            args.host,
+            args.node,
+            args.storage,
+            args.vmid,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.backup.list", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.vm.backup.restore",
+        description = "Restore a Proxmox VM or LXC container from a vzdump backup archive. DESTRUCTIVE: will fail if the target VMID already exists. Use dry_run=true first. This is a TWO-STEP operation: (1) Returns a confirmation token. (2) Call confirm_operation with that token and tool_name=\"proxmox.vm.backup.restore\" to execute.",
+        annotations(destructive_hint = true)
+    )]
+    async fn proxmox_backup_restore(
+        &self,
+        Parameters(args): Parameters<ProxmoxBackupRestoreArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.vm.backup.restore")?;
+        let start = Instant::now();
+        let result = proxmox::backup_restore(
+            self.manager.clone(),
+            self.confirmation.clone(),
+            args.host,
+            args.node,
+            args.archive,
+            args.vmid,
+            args.storage,
+            args.vm_type,
+            args.dry_run,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.vm.backup.restore", start, result.is_err());
+        result
+    }
+
+    #[tool(
         name = "proxmox.storage.list",
         description = "List Proxmox storage pools with usage information (type, capacity, content types)",
         annotations(read_only_hint = true, idempotent_hint = true)
@@ -1223,6 +1628,136 @@ impl HomelabMcpServer {
         .await
         .map_err(|error| error.to_string());
         self.record_tool_call("proxmox.network.list", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.network.create",
+        description = "Create a network interface (bridge, VLAN, or bond) on a Proxmox node. Network changes are STAGED — call proxmox.network.apply to make them live.",
+        annotations(destructive_hint = true)
+    )]
+    async fn proxmox_network_create(
+        &self,
+        Parameters(args): Parameters<ProxmoxNetworkCreateArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.network.create")?;
+        let start = Instant::now();
+        let result = proxmox::network_create(
+            self.manager.clone(),
+            args.host,
+            args.node,
+            args.iface,
+            args.iface_type,
+            args.address,
+            args.netmask,
+            args.gateway,
+            args.address6,
+            args.netmask6,
+            args.gateway6,
+            args.bridge_ports,
+            args.slaves,
+            args.bond_mode,
+            args.vlan_id,
+            args.vlan_raw_device,
+            args.autostart,
+            args.comments,
+            args.dry_run,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.network.create", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.network.update",
+        description = "Modify an existing network interface configuration on a Proxmox node. Only specify parameters you want to change. Network changes are STAGED — call proxmox.network.apply to make them live. This is a TWO-STEP operation: (1) Returns a confirmation token. (2) Call confirm_operation with that token and tool_name=\"proxmox.network.update\" to execute.",
+        annotations(destructive_hint = true)
+    )]
+    async fn proxmox_network_update(
+        &self,
+        Parameters(args): Parameters<ProxmoxNetworkUpdateArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.network.update")?;
+        let start = Instant::now();
+        let result = proxmox::network_update(
+            self.manager.clone(),
+            self.confirmation.clone(),
+            args.host,
+            args.node,
+            args.iface,
+            args.address,
+            args.netmask,
+            args.gateway,
+            args.address6,
+            args.netmask6,
+            args.gateway6,
+            args.bridge_ports,
+            args.slaves,
+            args.bond_mode,
+            args.vlan_id,
+            args.vlan_raw_device,
+            args.autostart,
+            args.comments,
+            args.iface_type,
+            args.dry_run,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.network.update", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.network.delete",
+        description = "Delete a network interface from a Proxmox node. WARNING: Removing a bridge can isolate VMs that depend on it. Network changes are STAGED — call proxmox.network.apply to make them live. This is a TWO-STEP operation: (1) Returns a confirmation token. (2) Call confirm_operation with that token and tool_name=\"proxmox.network.delete\" to execute.",
+        annotations(destructive_hint = true)
+    )]
+    async fn proxmox_network_delete(
+        &self,
+        Parameters(args): Parameters<ProxmoxNetworkDeleteArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.network.delete")?;
+        let start = Instant::now();
+        let result = proxmox::network_delete(
+            self.manager.clone(),
+            self.confirmation.clone(),
+            args.host,
+            args.node,
+            args.iface,
+            args.dry_run,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.network.delete", start, result.is_err());
+        result
+    }
+
+    #[tool(
+        name = "proxmox.network.apply",
+        description = "Apply all pending network configuration changes on a Proxmox node, making staged changes live. This is the equivalent of the 'Apply Configuration' button in the Proxmox UI. WARNING: Applying bad config to the management bridge (vmbr0) can isolate the host. This is a TWO-STEP operation: (1) Returns a confirmation token. (2) Call confirm_operation with that token and tool_name=\"proxmox.network.apply\" to execute.",
+        annotations(destructive_hint = true)
+    )]
+    async fn proxmox_network_apply(
+        &self,
+        Parameters(args): Parameters<ProxmoxNetworkApplyArgs>,
+    ) -> Result<String, String> {
+        self.ensure_tool_available("proxmox.network.apply")?;
+        let start = Instant::now();
+        let result = proxmox::network_apply(
+            self.manager.clone(),
+            self.confirmation.clone(),
+            args.host,
+            args.node,
+            args.dry_run,
+            self.audit.clone(),
+        )
+        .await
+        .map_err(|error| error.to_string());
+        self.record_tool_call("proxmox.network.apply", start, result.is_err());
         result
     }
 
@@ -1546,6 +2081,89 @@ impl HomelabMcpServer {
                 .await
                 .map_err(|error| error.to_string())
             }
+            "proxmox.vm.config.update" => {
+                let params: ProxmoxVmConfigUpdateArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
+                let host = params
+                    .host
+                    .map_or_else(|| proxmox::default_proxmox_host(&self.manager), Ok)
+                    .map_err(|error| error.to_string())?;
+                self.audit
+                    .log(
+                        "proxmox.vm.config.update",
+                        &host,
+                        "confirmed_exec",
+                        Some(&params.vmid.to_string()),
+                    )
+                    .await
+                    .ok();
+                proxmox::vm_config_update_confirmed(
+                    self.manager.clone(),
+                    host,
+                    params.node,
+                    params.vmid,
+                    params.vm_type.unwrap_or_else(|| "qemu".to_string()),
+                    params.cores,
+                    params.sockets,
+                    params.memory,
+                    params.balloon,
+                    params.cpu_type,
+                    params.name,
+                    params.description,
+                    params.onboot,
+                    params.ciuser,
+                    params.cipassword,
+                    params.sshkeys,
+                    params.ipconfig0,
+                    params.ipconfig1,
+                    params.nameserver,
+                    params.searchdomain,
+                    params.swap,
+                    params.cpulimit,
+                    params.unprivileged,
+                    params.boot,
+                    params.ostype,
+                    params.machine,
+                    params.bios,
+                    params.net0,
+                    params.net1,
+                    params.scsi0,
+                    params.virtio0,
+                    params.delete_keys,
+                    self.audit.clone(),
+                )
+                .await
+                .map_err(|error| error.to_string())
+            }
+            "proxmox.vm.backup.restore" => {
+                let params: ProxmoxBackupRestoreArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
+                let host = params
+                    .host
+                    .map_or_else(|| proxmox::default_proxmox_host(&self.manager), Ok)
+                    .map_err(|error| error.to_string())?;
+                self.audit
+                    .log(
+                        "proxmox.vm.backup.restore",
+                        &host,
+                        "confirmed_exec",
+                        Some(&params.vmid.to_string()),
+                    )
+                    .await
+                    .ok();
+                proxmox::backup_restore_confirmed(
+                    self.manager.clone(),
+                    host,
+                    params.node,
+                    params.archive,
+                    params.vmid,
+                    params.storage,
+                    params.vm_type.unwrap_or_else(|| "qemu".to_string()),
+                    self.audit.clone(),
+                )
+                .await
+                .map_err(|error| error.to_string())
+            }
             "proxmox.vm.snapshot.rollback" => {
                 let params: ProxmoxSnapshotRollbackArgs =
                     serde_json::from_str(&original_params_json)
@@ -1570,6 +2188,98 @@ impl HomelabMcpServer {
                     params.vmid,
                     params.vm_type.unwrap_or_else(|| "qemu".to_string()),
                     params.snapname,
+                    self.audit.clone(),
+                )
+                .await
+                .map_err(|error| error.to_string())
+            }
+            "proxmox.network.update" => {
+                let params: ProxmoxNetworkUpdateArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
+                let host = params
+                    .host
+                    .as_ref()
+                    .map(|h| Ok(h.clone()))
+                    .unwrap_or_else(|| proxmox::default_proxmox_host(&self.manager))
+                    .map_err(|error| error.to_string())?;
+                self.audit
+                    .log(
+                        "proxmox.network.update",
+                        &host,
+                        "confirmed_exec",
+                        Some(&params.iface),
+                    )
+                    .await
+                    .ok();
+                proxmox::network_update_confirmed(
+                    self.manager.clone(),
+                    host,
+                    params.node,
+                    params.iface,
+                    params.address,
+                    params.netmask,
+                    params.gateway,
+                    params.address6,
+                    params.netmask6,
+                    params.gateway6,
+                    params.bridge_ports,
+                    params.slaves,
+                    params.bond_mode,
+                    params.vlan_id,
+                    params.vlan_raw_device,
+                    params.autostart,
+                    params.comments,
+                    params.iface_type,
+                    self.audit.clone(),
+                )
+                .await
+                .map_err(|error| error.to_string())
+            }
+            "proxmox.network.delete" => {
+                let params: ProxmoxNetworkDeleteArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
+                let host = params
+                    .host
+                    .as_ref()
+                    .map(|h| Ok(h.clone()))
+                    .unwrap_or_else(|| proxmox::default_proxmox_host(&self.manager))
+                    .map_err(|error| error.to_string())?;
+                self.audit
+                    .log(
+                        "proxmox.network.delete",
+                        &host,
+                        "confirmed_exec",
+                        Some(&params.iface),
+                    )
+                    .await
+                    .ok();
+                proxmox::network_delete_confirmed(
+                    self.manager.clone(),
+                    host,
+                    params.node,
+                    params.iface,
+                    self.audit.clone(),
+                )
+                .await
+                .map_err(|error| error.to_string())
+            }
+            "proxmox.network.apply" => {
+                let params: ProxmoxNetworkApplyArgs = serde_json::from_str(&original_params_json)
+                    .map_err(|error| error.to_string())?;
+                let host = params
+                    .host
+                    .as_ref()
+                    .map(|h| Ok(h.clone()))
+                    .unwrap_or_else(|| proxmox::default_proxmox_host(&self.manager))
+                    .map_err(|error| error.to_string())?;
+                self.audit
+                    .log("proxmox.network.apply", &host, "confirmed_exec", None)
+                    .await
+                    .ok();
+                proxmox::network_apply_confirmed(
+                    self.manager.clone(),
+                    host,
+                    params.node,
                     self.audit.clone(),
                 )
                 .await

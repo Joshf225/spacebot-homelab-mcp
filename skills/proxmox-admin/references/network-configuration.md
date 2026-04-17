@@ -174,9 +174,94 @@ The physical switch must support LACP and have the ports configured for it.
 
 ## Applying network changes
 
-Network changes to `/etc/network/interfaces` require either:
+Network changes made via the Proxmox API (`proxmox.network.create`, `proxmox.network.update`, `proxmox.network.delete`) are **staged** — they do not take effect immediately. Use `proxmox.network.apply` to make them live (equivalent to the "Apply Configuration" button in the Proxmox web UI).
+
+For changes made directly to `/etc/network/interfaces` via SSH, apply with:
 - `ifreload -a` -- applies changes without reboot (Proxmox uses ifupdown2).
 - `systemctl restart networking` -- restarts networking (brief outage).
 - Reboot -- safest but most disruptive.
 
 **Warning:** incorrect network configuration can make the host unreachable. Always have IPMI/iLO/iDRAC access or physical console access as a fallback.
+
+## Creating network interfaces via MCP tools
+
+### Create a bridge
+
+```text
+proxmox.network.create(
+  iface="vmbr1",
+  type="bridge",
+  address="10.0.50.1",
+  netmask="255.255.255.0",
+  bridge_ports="eno2",
+  autostart=true,
+  comments="Homelab VLAN 50 bridge"
+)
+proxmox.network.apply()  # Make the change live
+```
+
+For an internal-only bridge (no physical uplink):
+```text
+proxmox.network.create(
+  iface="vmbr99",
+  type="bridge",
+  autostart=true,
+  comments="Internal-only bridge for isolated VMs"
+)
+proxmox.network.apply()
+```
+
+### Create a VLAN interface
+
+```text
+proxmox.network.create(
+  iface="eno1.50",
+  type="vlan",
+  vlan_id=50,
+  vlan_raw_device="eno1",
+  autostart=true,
+  comments="VLAN 50 on eno1"
+)
+proxmox.network.apply()
+```
+
+### Create a bond
+
+```text
+proxmox.network.create(
+  iface="bond0",
+  type="bond",
+  slaves="eno1 eno2",
+  bond_mode="802.3ad",
+  autostart=true,
+  comments="LACP bond for vmbr0"
+)
+proxmox.network.apply()
+```
+
+Use `slaves` for bond interfaces. `bridge_ports` is only for bridge interfaces.
+
+### Modify an existing interface
+
+```text
+proxmox.network.update(
+  iface="vmbr1",
+  gateway="10.0.50.254",
+  comments="Updated gateway"
+)
+proxmox.network.apply()
+```
+
+### Delete an interface
+
+```text
+proxmox.network.delete(iface="vmbr1")
+proxmox.network.apply()
+```
+
+### Workflow: always verify before applying
+
+1. Make changes with `proxmox.network.create` / `proxmox.network.update` / `proxmox.network.delete`.
+2. Review staged config: `proxmox.network.list` — verify everything looks correct.
+3. Apply: `proxmox.network.apply` — makes changes live.
+4. If something goes wrong, use IPMI/console access to revert `/etc/network/interfaces` manually.

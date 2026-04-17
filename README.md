@@ -2,6 +2,8 @@
 
 An MCP (Model Context Protocol) server that provides Docker, SSH, and Proxmox VE tools for managing homelab infrastructure via Spacebot.
 
+> **41 tools** across Docker, Proxmox VE, and SSH.
+
 This is a standalone Rust binary that runs as an external process. Spacebot connects to it via the MCP protocol and delegates homelab-related tasks to it.
 
 ## Architecture
@@ -16,10 +18,10 @@ spacebot-homelab-mcp
     │   ├── Docker clients (local socket + remote TCP/TLS)
     │   ├── SSH connection pool (multiplexed sessions)
     │   └── Proxmox REST API clients (token auth + self-signed TLS support)
-    ├── Tool implementations (32 tools)
+    ├── Tool implementations (41 tools)
     │   ├── docker.container.*  (7 tools)
     │   ├── docker.image.*      (5 tools)
-    │   ├── proxmox.*           (14 tools)
+    │   ├── proxmox.*           (23 tools)
     │   ├── ssh.*               (3 tools)
     │   ├── confirm_operation   (confirmation flow)
     │   └── audit.*             (2 verification tools)
@@ -132,7 +134,12 @@ blocked_patterns = ["rm -rf", "dd if=", "mkfs", "> /dev/"]
 "proxmox.vm.stop" = "always"
 "proxmox.vm.create" = "always"
 "proxmox.vm.delete" = "always"
+"proxmox.vm.config.update" = "always"
+"proxmox.vm.backup.restore" = "always"
 "proxmox.vm.snapshot.rollback" = "always"
+"proxmox.network.update" = "always"
+"proxmox.network.delete" = "always"
+"proxmox.network.apply" = "always"
 "ssh.exec" = { when_pattern = ["rm -rf", "dd if=", "systemctl restart"] }
 ```
 
@@ -227,10 +234,25 @@ args = ["server", "--config", "~/.spacebot-homelab/config.toml"]
 | Tool | Description | Destructive | Confirmation |
 |------|-------------|:-----------:|:------------:|
 | `proxmox.vm.start` | Start a Proxmox VM or LXC container | No | — |
-| `proxmox.vm.stop` | Force-stop a Proxmox VM or LXC container immediately | Yes | Yes |
+| `proxmox.vm.stop` | Force-stop a Proxmox VM or LXC container immediately (hard stop, not graceful ACPI shutdown) | Yes | Yes |
 | `proxmox.vm.create` | Create a new Proxmox VM or LXC container | Yes | Yes |
 | `proxmox.vm.clone` | Clone an existing Proxmox VM | No | — |
 | `proxmox.vm.delete` | Permanently delete a Proxmox VM or LXC container | Yes | Yes |
+
+### Proxmox VM configuration tools
+
+| Tool | Description | Destructive | Confirmation |
+|------|-------------|:-----------:|:------------:|
+| `proxmox.vm.config.get` | Read CPU, memory, disk, network, cloud-init, and boot settings for a VM or LXC container | No | — |
+| `proxmox.vm.config.update` | Update configuration of an existing VM or LXC container — resize CPU/RAM, change network, set cloud-init (IP, user, SSH keys), and more | Yes | Yes |
+
+### Proxmox backup tools
+
+| Tool | Description | Destructive | Confirmation |
+|------|-------------|:-----------:|:------------:|
+| `proxmox.vm.backup.create` | Create a vzdump backup of a VM or LXC container | No | — |
+| `proxmox.vm.backup.list` | List vzdump backups on a storage pool (optionally filtered by VM ID) | No | — |
+| `proxmox.vm.backup.restore` | Restore a VM or LXC container from a vzdump backup | Yes | Yes |
 
 ### Proxmox snapshot and infrastructure tools
 
@@ -241,6 +263,15 @@ args = ["server", "--config", "~/.spacebot-homelab/config.toml"]
 | `proxmox.vm.snapshot.rollback` | Roll back a VM or container to a snapshot | Yes | Yes |
 | `proxmox.storage.list` | List Proxmox storage pools and usage | No | — |
 | `proxmox.network.list` | List Proxmox network interfaces, bridges, VLANs, and bonds | No | — |
+
+### Proxmox network management tools
+
+| Tool | Description | Destructive | Confirmation |
+|------|-------------|:-----------:|:------------:|
+| `proxmox.network.create` | Create a network bridge, VLAN, or bond on a Proxmox node | No | — |
+| `proxmox.network.update` | Modify an existing network interface configuration | Yes | Yes |
+| `proxmox.network.delete` | Delete a network interface from a Proxmox node | Yes | Yes |
+| `proxmox.network.apply` | Apply pending network configuration changes (makes staged changes live) | Yes | Yes |
 
 ### System tools
 
@@ -300,7 +331,7 @@ src/
 ├── main.rs              — CLI entry point (server, doctor, setup subcommands)
 ├── config.rs            — Configuration loading and validation
 ├── connection.rs        — Connection manager (Docker clients, SSH pool, Proxmox clients)
-├── mcp.rs               — MCP tool handler (32 tools registered)
+├── mcp.rs               — MCP tool handler (41 tools registered)
 ├── audit.rs             — Audit logging
 ├── confirmation.rs      — Two-step confirmation manager
 ├── rate_limit.rs        — Per-tool rate limiting

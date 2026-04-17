@@ -37,7 +37,7 @@ impl RateLimiter {
         }
 
         // Prefer the most specific wildcard first.
-        wildcards.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        wildcards.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
 
         Self {
             windows: Arc::new(DashMap::new()),
