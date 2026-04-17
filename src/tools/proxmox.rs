@@ -1804,6 +1804,7 @@ pub async fn vm_config_get(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn vm_config_update(
     manager: Arc<ConnectionManager>,
     confirmation: Arc<ConfirmationManager>,
@@ -1888,23 +1889,23 @@ pub async fn vm_config_update(
     if dry_run.unwrap_or(false) {
         // For dry_run, just show what would be changed
         let mut changes = vec![];
-        if cores.is_some() {
-            changes.push(format!("cores → {}", cores.unwrap()));
+        if let Some(v) = cores {
+            changes.push(format!("cores → {}", v));
         }
-        if memory.is_some() {
-            changes.push(format!("memory → {} MB", memory.unwrap()));
+        if let Some(v) = memory {
+            changes.push(format!("memory → {} MB", v));
         }
-        if sockets.is_some() {
-            changes.push(format!("sockets → {}", sockets.unwrap()));
+        if let Some(v) = sockets {
+            changes.push(format!("sockets → {}", v));
         }
-        if name.is_some() {
-            changes.push(format!("name → {}", name.as_ref().unwrap()));
+        if let Some(ref v) = name {
+            changes.push(format!("name → {}", v));
         }
-        if ciuser.is_some() {
-            changes.push(format!("ciuser → {}", ciuser.as_ref().unwrap()));
+        if let Some(ref v) = ciuser {
+            changes.push(format!("ciuser → {}", v));
         }
-        if ipconfig0.is_some() {
-            changes.push(format!("ipconfig0 → {}", ipconfig0.as_ref().unwrap()));
+        if let Some(ref v) = ipconfig0 {
+            changes.push(format!("ipconfig0 → {}", v));
         }
 
         let output = format!(
@@ -2057,6 +2058,7 @@ pub async fn vm_config_update(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn vm_config_update_confirmed(
     manager: Arc<ConnectionManager>,
     host: String,
