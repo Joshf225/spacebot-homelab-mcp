@@ -145,7 +145,7 @@ docker.container.create(
   host="<DOCKER_HOST>",
   name="<SERVICE_NAME>",
   image="<IMAGE>",
-  ports=["<HOST_PORT>:<CONTAINER_PORT>"],
+  ports={"<HOST_PORT>": "<CONTAINER_PORT>"},
   env=["PUID=1000", "PGID=1000", "TZ=America/New_York"],
   volumes=["/opt/docker/<SERVICE_NAME>/config:/config", "/opt/docker/<SERVICE_NAME>/data:/data"],
   restart_policy="unless-stopped"

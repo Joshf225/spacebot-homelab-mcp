@@ -416,7 +416,7 @@ environment:
 
 3. **Back up database:**
    ```
-   ssh.exec(host="<DOCKER_HOST>", command="docker exec nextcloud-db mariadb-dump -u root -p<MYSQL_ROOT_PASSWORD> nextcloud | gzip > /opt/nextcloud/backup-pre-upgrade-$(date +%Y%m%d).sql.gz")
+   ssh.exec(host="<DOCKER_HOST>", command="docker exec -e MYSQL_PWD=<MYSQL_ROOT_PASSWORD> nextcloud-db mariadb-dump -u root nextcloud | gzip > /opt/nextcloud/backup-pre-upgrade-$(date +%Y%m%d).sql.gz")
    ```
 
 4. **Back up data (or ensure recent snapshot exists):**

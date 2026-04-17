@@ -27,7 +27,7 @@ Configure services in this order to minimize back-and-forth:
 On first launch, qBittorrent generates a temporary password. Find it in the logs:
 
 ```
-docker.container.logs(host="<DOCKER_HOST>", name="qbittorrent", tail=30)
+docker.container.logs(host="<DOCKER_HOST>", container="qbittorrent", tail=30)
 ```
 
 Look for a line like: `The WebUI administrator password was not set. A temporary password is provided: <password>`

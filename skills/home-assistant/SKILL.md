@@ -59,7 +59,8 @@ Additionally, the following tools are used for Compose workflows and host manage
 | `ssh.upload` | Upload files (compose files, configs) to Docker hosts | No |
 | `ssh.download` | Download files from Docker hosts | No |
 | `confirm_operation` | Confirm a destructive operation with a token | N/A |
-| `audit.log` | Log an operation for audit trail | No |
+| `audit.verify_operation` | Verify a logged audit operation | No |
+| `audit.verify_container_state` | Verify a logged container state audit entry | No |
 
 ## Environment variables
 
@@ -464,7 +465,7 @@ Environment variables:
 9. **Wait for first boot (2-3 minutes):**
    ```
    ssh.exec(host="<DOCKER_HOST>", command="docker compose ps", cwd="<COMPOSE_DIR>")
-   docker.container.logs(host="<DOCKER_HOST>", name="homeassistant", tail=30)
+   docker.container.logs(host="<DOCKER_HOST>", container="homeassistant", tail=30)
    ```
    Look for "Home Assistant initialized" in logs.
 

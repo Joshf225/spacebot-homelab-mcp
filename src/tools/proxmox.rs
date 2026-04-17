@@ -1804,6 +1804,124 @@ pub async fn vm_config_get(
     }
 }
 
+/// Build a human-readable list of configuration changes for display in dry-run
+/// output and confirmation previews.  Secrets are redacted; optional fields that
+/// are `None` are omitted entirely.
+#[allow(clippy::too_many_arguments)]
+fn summarize_config_changes(
+    cores: Option<u32>,
+    sockets: Option<u32>,
+    memory: Option<u32>,
+    balloon: Option<u32>,
+    cpu_type: Option<&str>,
+    name: Option<&str>,
+    description: Option<&str>,
+    onboot: Option<bool>,
+    ciuser: Option<&str>,
+    cipassword: Option<&str>,
+    sshkeys: Option<&str>,
+    ipconfig0: Option<&str>,
+    ipconfig1: Option<&str>,
+    nameserver: Option<&str>,
+    searchdomain: Option<&str>,
+    swap: Option<u32>,
+    cpulimit: Option<f64>,
+    unprivileged: Option<bool>,
+    boot: Option<&str>,
+    ostype: Option<&str>,
+    machine: Option<&str>,
+    bios: Option<&str>,
+    net0: Option<&str>,
+    net1: Option<&str>,
+    scsi0: Option<&str>,
+    virtio0: Option<&str>,
+    delete_keys: Option<&str>,
+) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    if let Some(v) = cores {
+        lines.push(format!("  cores:        → {}", v));
+    }
+    if let Some(v) = sockets {
+        lines.push(format!("  sockets:      → {}", v));
+    }
+    if let Some(v) = memory {
+        lines.push(format!("  memory:       → {} MB", v));
+    }
+    if let Some(v) = balloon {
+        lines.push(format!("  balloon:      → {} MB", v));
+    }
+    if let Some(v) = cpu_type {
+        lines.push(format!("  cpu:          → {}", v));
+    }
+    if let Some(v) = name {
+        lines.push(format!("  name:         → {}", v));
+    }
+    if let Some(v) = description {
+        lines.push(format!("  description:  → {}", v));
+    }
+    if let Some(v) = onboot {
+        lines.push(format!("  onboot:       → {}", v));
+    }
+    if let Some(v) = ciuser {
+        lines.push(format!("  ciuser:       → {}", v));
+    }
+    if cipassword.is_some() {
+        lines.push("  cipassword:   → (set, redacted)".to_string());
+    }
+    if let Some(v) = sshkeys {
+        lines.push(format!("  sshkeys:      → ({} chars)", v.len()));
+    }
+    if let Some(v) = ipconfig0 {
+        lines.push(format!("  ipconfig0:    → {}", v));
+    }
+    if let Some(v) = ipconfig1 {
+        lines.push(format!("  ipconfig1:    → {}", v));
+    }
+    if let Some(v) = nameserver {
+        lines.push(format!("  nameserver:   → {}", v));
+    }
+    if let Some(v) = searchdomain {
+        lines.push(format!("  searchdomain: → {}", v));
+    }
+    if let Some(v) = swap {
+        lines.push(format!("  swap:         → {} MB", v));
+    }
+    if let Some(v) = cpulimit {
+        lines.push(format!("  cpulimit:     → {}", v));
+    }
+    if let Some(v) = unprivileged {
+        lines.push(format!("  unprivileged: → {}", v));
+    }
+    if let Some(v) = boot {
+        lines.push(format!("  boot:         → {}", v));
+    }
+    if let Some(v) = ostype {
+        lines.push(format!("  ostype:       → {}", v));
+    }
+    if let Some(v) = machine {
+        lines.push(format!("  machine:      → {}", v));
+    }
+    if let Some(v) = bios {
+        lines.push(format!("  bios:         → {}", v));
+    }
+    if let Some(v) = net0 {
+        lines.push(format!("  net0:         → {}", v));
+    }
+    if let Some(v) = net1 {
+        lines.push(format!("  net1:         → {}", v));
+    }
+    if let Some(v) = scsi0 {
+        lines.push(format!("  scsi0:        → {}", v));
+    }
+    if let Some(v) = virtio0 {
+        lines.push(format!("  virtio0:      → {}", v));
+    }
+    if let Some(v) = delete_keys {
+        lines.push(format!("  delete:       → {}", v));
+    }
+    lines
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn vm_config_update(
     manager: Arc<ConnectionManager>,
@@ -1887,33 +2005,41 @@ pub async fn vm_config_update(
     }
 
     if dry_run.unwrap_or(false) {
-        // For dry_run, just show what would be changed
-        let mut changes = vec![];
-        if let Some(v) = cores {
-            changes.push(format!("cores → {}", v));
-        }
-        if let Some(v) = memory {
-            changes.push(format!("memory → {} MB", v));
-        }
-        if let Some(v) = sockets {
-            changes.push(format!("sockets → {}", v));
-        }
-        if let Some(ref v) = name {
-            changes.push(format!("name → {}", v));
-        }
-        if let Some(ref v) = ciuser {
-            changes.push(format!("ciuser → {}", v));
-        }
-        if let Some(ref v) = ipconfig0 {
-            changes.push(format!("ipconfig0 → {}", v));
-        }
-
+        let changes = summarize_config_changes(
+            cores,
+            sockets,
+            memory,
+            balloon,
+            cpu_type.as_deref(),
+            name.as_deref(),
+            description.as_deref(),
+            onboot,
+            ciuser.as_deref(),
+            cipassword.as_deref(),
+            sshkeys.as_deref(),
+            ipconfig0.as_deref(),
+            ipconfig1.as_deref(),
+            nameserver.as_deref(),
+            searchdomain.as_deref(),
+            swap,
+            cpulimit,
+            unprivileged,
+            boot.as_deref(),
+            ostype.as_deref(),
+            machine.as_deref(),
+            bios.as_deref(),
+            net0.as_deref(),
+            net1.as_deref(),
+            scsi0.as_deref(),
+            virtio0.as_deref(),
+            delete_keys.as_deref(),
+        );
         let output = format!(
-            "DRY RUN: Would UPDATE {} {} on Proxmox host '{}' with:\n  {}",
+            "DRY RUN: Would UPDATE {} {} on Proxmox host '{}' with:\n{}",
             vm_type_str,
             vmid,
             host,
-            changes.join("\n  ")
+            changes.join("\n")
         );
 
         audit
@@ -1935,31 +2061,35 @@ pub async fn vm_config_update(
         vm_type_str, vmid
     )];
     preview_lines.push("Changes:".to_string());
-
-    if let Some(v) = &cores {
-        preview_lines.push(format!("  cores:       → {}", v));
-    }
-    if let Some(v) = &sockets {
-        preview_lines.push(format!("  sockets:     → {}", v));
-    }
-    if let Some(v) = &memory {
-        preview_lines.push(format!("  memory:      → {} MB", v));
-    }
-    if let Some(v) = &balloon {
-        preview_lines.push(format!("  balloon:     → {} MB", v));
-    }
-    if let Some(v) = &name {
-        preview_lines.push(format!("  name:        → {}", v));
-    }
-    if let Some(v) = &ciuser {
-        preview_lines.push(format!("  ciuser:      → {}", v));
-    }
-    if let Some(v) = &ipconfig0 {
-        preview_lines.push(format!("  ipconfig0:   → {}", v));
-    }
-    if let Some(v) = &ipconfig1 {
-        preview_lines.push(format!("  ipconfig1:   → {}", v));
-    }
+    preview_lines.extend(summarize_config_changes(
+        cores,
+        sockets,
+        memory,
+        balloon,
+        cpu_type.as_deref(),
+        name.as_deref(),
+        description.as_deref(),
+        onboot,
+        ciuser.as_deref(),
+        cipassword.as_deref(),
+        sshkeys.as_deref(),
+        ipconfig0.as_deref(),
+        ipconfig1.as_deref(),
+        nameserver.as_deref(),
+        searchdomain.as_deref(),
+        swap,
+        cpulimit,
+        unprivileged,
+        boot.as_deref(),
+        ostype.as_deref(),
+        machine.as_deref(),
+        bios.as_deref(),
+        net0.as_deref(),
+        net1.as_deref(),
+        scsi0.as_deref(),
+        virtio0.as_deref(),
+        delete_keys.as_deref(),
+    ));
 
     preview_lines.push("\nUse confirm_operation to apply.".to_string());
 
@@ -2552,8 +2682,15 @@ pub async fn backup_restore_confirmed(
         let node_name = client.resolve_node(node.as_deref()).await?;
         let vm_type_resolved = resolved_vm_type(Some(&vm_type))?;
 
-        let mut params: Vec<(&str, String)> =
-            vec![("vmid", vmid.to_string()), ("archive", archive.clone())];
+        let mut params: Vec<(&str, String)> = vec![("vmid", vmid.to_string())];
+        if vm_type_resolved == "lxc" {
+            // LXC restore uses ostemplate + restore=1, not archive
+            params.push(("ostemplate", archive.clone()));
+            params.push(("restore", "1".to_string()));
+        } else {
+            // QEMU restore uses archive
+            params.push(("archive", archive.clone()));
+        }
         if let Some(ref s) = storage {
             params.push(("storage", s.clone()));
         }

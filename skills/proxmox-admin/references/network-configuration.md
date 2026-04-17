@@ -231,7 +231,7 @@ proxmox.network.apply()
 proxmox.network.create(
   iface="bond0",
   type="bond",
-  bridge_ports="eno1 eno2",
+  slaves="eno1 eno2",
   bond_mode="802.3ad",
   autostart=true,
   comments="LACP bond for vmbr0"
