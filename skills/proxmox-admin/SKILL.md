@@ -40,15 +40,24 @@ This skill depends on the following Spacebot MCP tools:
 | `proxmox.vm.list` | List VMs/CTs on a node (filter by qemu/lxc) | No |
 | `proxmox.vm.status` | Detailed VM/CT status (CPU, memory, disk, network I/O) | No |
 | `proxmox.vm.start` | Start a VM/CT | No |
-| `proxmox.vm.stop` | Immediate (force) stop of a VM/CT; does not attempt graceful shutdown | Yes |
+| `proxmox.vm.stop` | Gracefully shut down a VM/CT via ACPI signal | Yes |
 | `proxmox.vm.create` | Create a new VM/CT | Yes |
 | `proxmox.vm.clone` | Clone a VM from a template or existing VM | No |
 | `proxmox.vm.delete` | Permanently delete a VM/CT | Yes |
+| `proxmox.vm.config.get` | Read current configuration of a VM/CT (CPU, memory, disks, network, cloud-init, boot) | No |
+| `proxmox.vm.config.update` | Update configuration of an existing VM/CT — resize CPU/RAM, set cloud-init (IP, user, SSH keys), change network, and more | Yes |
 | `proxmox.vm.snapshot.list` | List snapshots for a VM/CT | No |
 | `proxmox.vm.snapshot.create` | Create a snapshot | No |
 | `proxmox.vm.snapshot.rollback` | Rollback to a previous snapshot (current state lost) | Yes |
+| `proxmox.vm.backup.create` | Create a vzdump backup of a VM/CT to a storage pool | No |
+| `proxmox.vm.backup.list` | List vzdump backups on a storage pool (optionally filter by VM ID) | No |
+| `proxmox.vm.backup.restore` | Restore a VM/CT from a vzdump backup archive | Yes |
 | `proxmox.storage.list` | List storage pools with usage | No |
 | `proxmox.network.list` | List network interfaces (bridges, VLANs, bonds) | No |
+| `proxmox.network.create` | Create a network bridge, VLAN, or bond | No |
+| `proxmox.network.update` | Modify an existing network interface configuration | Yes |
+| `proxmox.network.delete` | Delete a network interface | Yes |
+| `proxmox.network.apply` | Apply pending network changes (makes staged config live) | Yes |
 
 Additionally, `ssh.exec` may be used for operations not covered by the Proxmox API (e.g., editing `/etc/network/interfaces`, running `qm` or `pct` CLI commands directly, checking kernel modules).
 
@@ -231,7 +240,8 @@ Follow in order when provisioning a new workload.
 To clone:
 1. Identify the template VMID: `proxmox.vm.list` (look for template entries or known template VMIDs in the user's convention).
 2. `proxmox.vm.clone` with `vmid=<TEMPLATE_VMID>`, `name=<new-name>`, `full=true` (or `false` for linked).
-3. After clone completes, `proxmox.vm.start` to boot the new VM.
+3. `proxmox.vm.config.update` to set cloud-init parameters, adjust CPU/RAM, or configure networking for this specific VM.
+4. `proxmox.vm.start` to boot the new VM.
 
 To create fresh:
 1. `proxmox.vm.create` with cores, memory, storage, ISO, and network parameters.
@@ -268,6 +278,11 @@ Always check available resources first: `proxmox.node.status` for node-level cap
 2. Default: `virtio,bridge=vmbr0` (standard paravirtualized NIC on the main bridge).
 3. If VLANs are in use: `virtio,bridge=vmbr0,tag=<VLAN_TAG>`.
 4. For isolated networks: use a separate bridge (e.g., `vmbr1` for an internal-only network).
+5. **Creating a new bridge:** if no suitable bridge exists, use `proxmox.network.create` with `type="bridge"` and `bridge_ports` set to the physical NIC (or empty for an internal-only bridge). Example: `proxmox.network.create(iface="vmbr1", type="bridge", bridge_ports="eno2", autostart=true)`.
+6. **Creating a VLAN interface:** use `proxmox.network.create` with `type="vlan"`, `vlan_id=<TAG>`, and `vlan_raw_device=<PARENT>`. Example: `proxmox.network.create(iface="eno1.50", type="vlan", vlan_id=50, vlan_raw_device="eno1")`.
+7. **IMPORTANT:** All network changes in Proxmox are **staged** — they do not take effect until you call `proxmox.network.apply`. Always verify the staged config looks correct (use `proxmox.network.list`) before applying.
+
+> **Safety warning:** Applying bad network configuration to the management bridge (`vmbr0`) can isolate the Proxmox host, making it unreachable via the API and web UI. Always verify the staged config before calling `proxmox.network.apply`. If possible, test changes on a non-management bridge first.
 
 ## VMID numbering conventions
 
@@ -303,10 +318,62 @@ Before converting:
 
 ### Cloud-init integration
 
-For QEMU templates with cloud-init:
+For QEMU VMs cloned from cloud-init-enabled templates, use `proxmox.vm.config.update` to set cloud-init parameters **before** the first boot:
+
+```
+proxmox.vm.config.update(
+  vmid=<VMID>,
+  ciuser="admin",
+  sshkeys="ssh-ed25519 AAAA...",
+  ipconfig0="ip=10.0.1.50/24,gw=10.0.1.1",
+  nameserver="1.1.1.1",
+  searchdomain="home.arpa"
+)
+```
+
+The full template-based provisioning workflow is:
+1. `proxmox.vm.clone` — clone the template
+2. `proxmox.vm.config.update` — set cloud-init params (IP, user, SSH keys), optionally resize CPU/RAM
+3. `proxmox.vm.start` — first boot; cloud-init runs and applies settings
+4. `ssh.exec` — VM is now reachable at the configured IP with the configured SSH key
+
+To prepare the template itself (one-time, via SSH to the Proxmox host):
 1. Add a cloud-init drive: `qm set <VMID> --ide2 <STORAGE>:cloudinit`
-2. Set defaults: `qm set <VMID> --ciuser admin --sshkeys ~/.ssh/authorized_keys --ipconfig0 ip=dhcp`
-3. Clones inherit these settings but can override them before first boot.
+2. Clean up: remove SSH host keys, machine-id, bash history.
+3. Convert to template: `qm template <VMID>`
+4. The VM becomes permanently read-only. Future VMs of this type are cloned from it.
+
+## Backup management
+
+### Backups vs snapshots
+
+| | Snapshots | Backups (vzdump) |
+|---|---|---|
+| **Purpose** | Quick rollback on the same storage | Off-storage disaster recovery |
+| **Location** | Same storage pool as the VM disk | Separate storage pool (NFS, PBS, local dir) |
+| **Speed** | Near-instant create/rollback | Slower — copies entire disk |
+| **Survives storage failure** | No — lost with the pool | Yes — stored on different media |
+| **Retention** | Manual cleanup | Can be managed with retention policies |
+
+**Rule of thumb:** Use snapshots for quick rollback before risky changes. Use backups for disaster recovery and long-term retention.
+
+### Creating a backup
+
+1. Choose a storage pool with `backup` in its content types: `proxmox.storage.list`.
+2. Verify the storage has enough free space (backup size ≈ used disk space of the VM).
+3. Select backup mode:
+   - **snapshot** (default, recommended): no downtime, uses LVM/ZFS snapshot during backup.
+   - **suspend**: pauses VM during backup, more consistent for non-snapshotable storage.
+   - **stop**: stops the VM entirely, most consistent but causes downtime.
+4. Select compression: **zstd** is recommended (best speed/ratio balance). Alternatives: lzo (fast, larger), gzip (compatible, slower), 0 (no compression).
+5. `proxmox.vm.backup.create` with the chosen parameters.
+
+### Restoring from a backup
+
+1. `proxmox.vm.backup.list` — identify the archive volume ID to restore from.
+2. Choose a target VMID that does not already exist (check with `proxmox.vm.list`).
+3. `proxmox.vm.backup.restore` with the archive volume ID and target VMID. This requires confirmation.
+4. If the target VMID already exists, the restore will fail. Delete or use a different VMID.
 
 ## Safety rules
 
@@ -321,6 +388,8 @@ For QEMU templates with cloud-init:
 5. **Stop before delete.** A running VM cannot be deleted. Always stop first, verify it's stopped, then delete.
 
 6. **Check node capacity before creating VMs.** Don't overcommit RAM beyond ~80% of physical unless the workloads are known to be light. CPU overcommit is generally fine up to 4:1 for typical homelab loads.
+
+7. **Verify backup storage has enough free space.** Before creating a backup, check the target storage pool's free space with `proxmox.storage.list`. A vzdump backup of a VM is roughly equal to the VM's used disk space (before compression).
 
 ## Troubleshooting: API connectivity issues
 
@@ -363,8 +432,11 @@ When managing Proxmox VMs/CTs:
 6. **Select storage:** match content type to pool, prefer fast local storage for OS disks.
 7. **Select network:** bridge + VLAN tag based on the network segment for this workload.
 8. **Preview with dry_run:** use `dry_run=true` on create/clone/delete before executing.
-9. **Execute and verify:** run the operation, then verify with `proxmox.vm.status`.
-10. **Snapshot after stable state:** once the VM is configured and working, take a snapshot as a restore point.
+9. **Execute provisioning:** run create or clone.
+10. **Configure the VM:** use `proxmox.vm.config.update` to set cloud-init params (IP, user, SSH keys), resize CPU/RAM, or change network — before first boot.
+11. **Start and verify:** `proxmox.vm.start`, then verify with `proxmox.vm.status`.
+12. **Snapshot after stable state:** once the VM is configured and working, take a snapshot as a restore point.
+13. **Create periodic backups:** for important VMs, create vzdump backups to a separate storage pool for disaster recovery. Use `proxmox.vm.backup.create` with zstd compression.
 
 ## Fast diagnosis cheatsheet
 
@@ -379,6 +451,12 @@ When managing Proxmox VMs/CTs:
 | API returns 403 on specific VM | Check ACL scope -- token may lack permissions on that VMID path |
 | Snapshot rollback fails | Stop the VM first, verify snapshot name with `proxmox.vm.snapshot.list` |
 | Storage pool >90% full | Remove old snapshots, delete unused VMs, check for orphaned disks via SSH |
+| Backup times out | Large VM + slow storage; increase `task_wait_timeout_secs` or use faster storage/compression |
+| Restore fails: VMID already exists | Choose an unused VMID or delete the existing VM first |
+| Storage full during backup | Free space on the backup storage pool; remove old backups with `proxmox.vm.backup.list` |
+| Network apply fails or host becomes unreachable | Bad config applied to `vmbr0`; access host via IPMI/console and revert `/etc/network/interfaces` |
+| Bridge creation error: "interface already exists" | The interface name is taken; use `proxmox.network.list` to see existing interfaces and choose a different name |
+| Network changes not taking effect | Changes are staged; call `proxmox.network.apply` to make them live |
 
 ## References
 
@@ -386,6 +464,7 @@ See supporting reference docs in `references/`:
 
 - `vm-lifecycle.md` -- step-by-step VM/CT creation, cloning, deletion procedures.
 - `snapshot-management.md` -- snapshot creation, rollback, and cleanup patterns.
+- `backup-management.md` -- vzdump backup modes, compression, retention, and restore procedures.
 - `storage-planning.md` -- storage pool types, content restrictions, and capacity planning.
 - `network-configuration.md` -- bridge setup, VLAN tagging, and common network patterns.
 - `api-troubleshooting.md` -- Proxmox API authentication, permissions, and error diagnosis.

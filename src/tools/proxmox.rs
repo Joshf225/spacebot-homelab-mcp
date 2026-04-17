@@ -2237,6 +2237,367 @@ pub async fn vm_config_update_confirmed(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn backup_create(
+    manager: Arc<ConnectionManager>,
+    host: Option<String>,
+    node: Option<String>,
+    vmid: u64,
+    storage: String,
+    mode: Option<String>,
+    compress: Option<String>,
+    notes: Option<String>,
+    dry_run: Option<bool>,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
+
+    let mode = mode.unwrap_or_else(|| "snapshot".to_string());
+    match mode.as_str() {
+        "snapshot" | "suspend" | "stop" => {}
+        other => return Err(anyhow!("mode must be 'snapshot', 'suspend', or 'stop'. Got '{}'", other)),
+    }
+    if let Some(ref c) = compress {
+        match c.as_str() {
+            "zstd" | "lzo" | "gzip" | "0" => {}
+            other => return Err(anyhow!("compress must be 'zstd', 'lzo', 'gzip', or '0'. Got '{}'", other)),
+        }
+    }
+
+    if dry_run.unwrap_or(false) {
+        let output = format!(
+            "DRY RUN: Would create vzdump backup of VM {} to storage '{}' on Proxmox host '{}'.\n\
+             Mode: {}\nCompress: {}",
+            vmid,
+            storage,
+            host,
+            mode,
+            compress.as_deref().unwrap_or("(default)"),
+        );
+        audit
+            .log(
+                "proxmox.vm.backup.create",
+                &host,
+                "dry_run",
+                Some(&vmid.to_string()),
+            )
+            .await
+            .ok();
+        return Ok(wrap_output_envelope("proxmox.vm.backup.create", &output));
+    }
+
+    let result: Result<String> = async {
+        let client = manager.get_proxmox(&host)?;
+        let node_name = client.resolve_node(node.as_deref()).await?;
+
+        let mut params: Vec<(&str, String)> = vec![
+            ("vmid", vmid.to_string()),
+            ("storage", storage.clone()),
+            ("mode", mode.clone()),
+        ];
+        if let Some(ref c) = compress {
+            params.push(("compress", c.clone()));
+        }
+        if let Some(ref n) = notes {
+            params.push(("notes-template", n.clone()));
+        }
+
+        let param_refs: Vec<(&str, &str)> = params
+            .iter()
+            .map(|(key, value)| (*key, value.as_str()))
+            .collect();
+
+        let path = format!("/nodes/{}/vzdump", node_name);
+        let response = client.post(&path, &param_refs).await?;
+
+        if let Some(upid) = response.as_str() {
+            let result = client
+                .wait_for_task(&node_name, upid, task_wait_timeout_secs(&manager, &host))
+                .await?;
+            Ok(format!(
+                "Backup created for VM {} on storage '{}' (node '{}'). {}",
+                vmid, storage, node_name, result
+            ))
+        } else {
+            Ok(format!(
+                "Backup requested for VM {} on storage '{}' (node '{}').",
+                vmid, storage, node_name
+            ))
+        }
+    }
+    .await;
+
+    match result {
+        Ok(output) => {
+            audit
+                .log(
+                    "proxmox.vm.backup.create",
+                    &host,
+                    "success",
+                    Some(&vmid.to_string()),
+                )
+                .await
+                .ok();
+            Ok(wrap_output_envelope("proxmox.vm.backup.create", &output))
+        }
+        Err(error) => {
+            audit
+                .log(
+                    "proxmox.vm.backup.create",
+                    &host,
+                    "error",
+                    Some(&error.to_string()),
+                )
+                .await
+                .ok();
+            Err(error)
+        }
+    }
+}
+
+pub async fn backup_list(
+    manager: Arc<ConnectionManager>,
+    host: Option<String>,
+    node: Option<String>,
+    storage: String,
+    vmid: Option<u64>,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
+    let result: Result<String> = async {
+        let client = manager.get_proxmox(&host)?;
+        let node_name = client.resolve_node(node.as_deref()).await?;
+        let path = format!("/nodes/{}/storage/{}/content?content=backup", node_name, storage);
+        let content = client.get(&path).await?;
+
+        let items = content
+            .as_array()
+            .ok_or_else(|| anyhow!("Unexpected response format from storage content list"))?;
+
+        // Filter by vmid if specified
+        let filtered: Vec<&Value> = items
+            .iter()
+            .filter(|item| {
+                if let Some(filter_vmid) = vmid {
+                    item.get("vmid").and_then(Value::as_u64) == Some(filter_vmid)
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        if filtered.is_empty() {
+            let filter_msg = vmid
+                .map(|id| format!(" for VM {}", id))
+                .unwrap_or_default();
+            return Ok(format!(
+                "No backups found{} on storage '{}' (node '{}').",
+                filter_msg, storage, node_name
+            ));
+        }
+
+        let mut lines = vec![format!(
+            "Backups on storage '{}' (node '{}', Proxmox host: {})\n\n{:<60}  {:<8}  {:<12}  {:<10}  {}",
+            storage, node_name, host, "VOLUME ID", "VMID", "SIZE", "FORMAT", "NOTES"
+        )];
+
+        for item in &filtered {
+            let volid = item.get("volid").and_then(Value::as_str).unwrap_or("?");
+            let item_vmid = item.get("vmid").and_then(Value::as_u64).unwrap_or(0);
+            let size = item.get("size").and_then(Value::as_u64).unwrap_or(0);
+            let fmt = item.get("format").and_then(Value::as_str).unwrap_or("?");
+            let notes = item.get("notes").and_then(Value::as_str).unwrap_or("");
+
+            lines.push(format!(
+                "{:<60}  {:<8}  {:<12}  {:<10}  {}",
+                volid,
+                item_vmid,
+                format_bytes(size),
+                fmt,
+                truncate_cell(notes, 40),
+            ));
+        }
+
+        Ok(truncate_output(&lines.join("\n"), OUTPUT_MAX_CHARS))
+    }
+    .await;
+
+    match result {
+        Ok(output) => {
+            audit
+                .log("proxmox.vm.backup.list", &host, "success", None)
+                .await
+                .ok();
+            Ok(wrap_output_envelope("proxmox.vm.backup.list", &output))
+        }
+        Err(error) => {
+            audit
+                .log(
+                    "proxmox.vm.backup.list",
+                    &host,
+                    "error",
+                    Some(&error.to_string()),
+                )
+                .await
+                .ok();
+            Err(error)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn backup_restore(
+    manager: Arc<ConnectionManager>,
+    confirmation: Arc<ConfirmationManager>,
+    host: Option<String>,
+    node: Option<String>,
+    archive: String,
+    vmid: u64,
+    storage: Option<String>,
+    vm_type: Option<String>,
+    dry_run: Option<bool>,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
+    let vm_type = vm_type.unwrap_or_else(|| "qemu".to_string());
+    ensure_vm_type(&vm_type)?;
+
+    if dry_run.unwrap_or(false) {
+        let output = format!(
+            "DRY RUN: Would restore {} {} from archive '{}' on Proxmox host '{}'.\n\
+             Target storage: {}",
+            vm_type,
+            vmid,
+            archive,
+            host,
+            storage.as_deref().unwrap_or("(default)"),
+        );
+        audit
+            .log(
+                "proxmox.vm.backup.restore",
+                &host,
+                "dry_run",
+                Some(&vmid.to_string()),
+            )
+            .await
+            .ok();
+        return Ok(wrap_output_envelope("proxmox.vm.backup.restore", &output));
+    }
+
+    let params_json = serde_json::json!({
+        "host": host.clone(),
+        "node": node.clone(),
+        "archive": archive.clone(),
+        "vmid": vmid,
+        "storage": storage.clone(),
+        "vm_type": vm_type.clone(),
+    })
+    .to_string();
+
+    if let Some(response) = confirmation
+        .check_and_maybe_require(
+            "proxmox.vm.backup.restore",
+            None,
+            &format!(
+                "About to RESTORE {} {} from archive '{}' on Proxmox host '{}'. If VMID {} already exists, the operation will fail.",
+                vm_type, vmid, archive, host, vmid
+            ),
+            &params_json,
+        )
+        .await?
+    {
+        audit
+            .log(
+                "proxmox.vm.backup.restore",
+                &host,
+                "confirmation_required",
+                Some(&vmid.to_string()),
+            )
+            .await
+            .ok();
+        return Ok(response);
+    }
+
+    backup_restore_confirmed(manager, host, node, archive, vmid, storage, vm_type, audit).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn backup_restore_confirmed(
+    manager: Arc<ConnectionManager>,
+    host: String,
+    node: Option<String>,
+    archive: String,
+    vmid: u64,
+    storage: Option<String>,
+    vm_type: String,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let result: Result<String> = async {
+        let client = manager.get_proxmox(&host)?;
+        let node_name = client.resolve_node(node.as_deref()).await?;
+        let vm_type_resolved = resolved_vm_type(Some(&vm_type))?;
+
+        let mut params: Vec<(&str, String)> = vec![
+            ("vmid", vmid.to_string()),
+            ("archive", archive.clone()),
+        ];
+        if let Some(ref s) = storage {
+            params.push(("storage", s.clone()));
+        }
+
+        let param_refs: Vec<(&str, &str)> = params
+            .iter()
+            .map(|(key, value)| (*key, value.as_str()))
+            .collect();
+
+        let path = format!("/nodes/{}/{}", node_name, vm_type_resolved);
+        let response = client.post(&path, &param_refs).await?;
+
+        if let Some(upid) = response.as_str() {
+            let result = client
+                .wait_for_task(&node_name, upid, task_wait_timeout_secs(&manager, &host))
+                .await?;
+            Ok(format!(
+                "Restored {} {} from '{}' on node '{}'. {}",
+                vm_type_resolved, vmid, archive, node_name, result
+            ))
+        } else {
+            Ok(format!(
+                "Restore requested for {} {} from '{}' on node '{}'.",
+                vm_type_resolved, vmid, archive, node_name
+            ))
+        }
+    }
+    .await;
+
+    match result {
+        Ok(output) => {
+            audit
+                .log(
+                    "proxmox.vm.backup.restore",
+                    &host,
+                    "success",
+                    Some(&vmid.to_string()),
+                )
+                .await
+                .ok();
+            Ok(wrap_output_envelope("proxmox.vm.backup.restore", &output))
+        }
+        Err(error) => {
+            audit
+                .log(
+                    "proxmox.vm.backup.restore",
+                    &host,
+                    "error",
+                    Some(&error.to_string()),
+                )
+                .await
+                .ok();
+            Err(error)
+        }
+    }
+}
+
 pub async fn network_list(
     manager: Arc<ConnectionManager>,
     host: Option<String>,
@@ -2490,6 +2851,467 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / KB as f64)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn network_create(
+    manager: Arc<ConnectionManager>,
+    host: Option<String>,
+    node: Option<String>,
+    iface: String,
+    iface_type: String,
+    address: Option<String>,
+    netmask: Option<String>,
+    gateway: Option<String>,
+    address6: Option<String>,
+    netmask6: Option<String>,
+    gateway6: Option<String>,
+    bridge_ports: Option<String>,
+    bond_mode: Option<String>,
+    vlan_id: Option<u32>,
+    vlan_raw_device: Option<String>,
+    autostart: Option<bool>,
+    comments: Option<String>,
+    dry_run: Option<bool>,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
+
+    if dry_run.unwrap_or(false) {
+        let output = format!(
+            "DRY RUN: Would create network interface '{}' (type: {}) on Proxmox host '{}'.\n\
+             Note: Network changes are staged — call proxmox.network.apply to make them live.",
+            iface, iface_type, host
+        );
+        audit
+            .log("proxmox.network.create", &host, "dry_run", Some(&iface))
+            .await
+            .ok();
+        return Ok(wrap_output_envelope("proxmox.network.create", &output));
+    }
+
+    let result: Result<String> = async {
+        let client = manager.get_proxmox(&host)?;
+        let node_name = client.resolve_node(node.as_deref()).await?;
+        let path = format!("/nodes/{}/network", node_name);
+
+        let mut params: Vec<(&str, String)> = vec![
+            ("iface", iface.clone()),
+            ("type", iface_type.clone()),
+        ];
+        if let Some(ref v) = address { params.push(("address", v.clone())); }
+        if let Some(ref v) = netmask { params.push(("netmask", v.clone())); }
+        if let Some(ref v) = gateway { params.push(("gateway", v.clone())); }
+        if let Some(ref v) = address6 { params.push(("address6", v.clone())); }
+        if let Some(ref v) = netmask6 { params.push(("netmask6", v.clone())); }
+        if let Some(ref v) = gateway6 { params.push(("gateway6", v.clone())); }
+        if let Some(ref v) = bridge_ports { params.push(("bridge_ports", v.clone())); }
+        if let Some(ref v) = bond_mode { params.push(("bond_mode", v.clone())); }
+        if let Some(v) = vlan_id { params.push(("vlan-id", v.to_string())); }
+        if let Some(ref v) = vlan_raw_device { params.push(("vlan-raw-device", v.clone())); }
+        if let Some(v) = autostart { params.push(("autostart", if v { "1" } else { "0" }.to_string())); }
+        if let Some(ref v) = comments { params.push(("comments", v.clone())); }
+
+        let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        client.post(&path, &params_ref).await?;
+
+        Ok(format!(
+            "Created network interface '{}' (type: {}) on node '{}' (host: '{}').\n\
+             Note: This change is STAGED. Call proxmox.network.apply to make it live.",
+            iface, iface_type, node_name, host
+        ))
+    }
+    .await;
+
+    match result {
+        Ok(output) => {
+            audit
+                .log("proxmox.network.create", &host, "success", Some(&iface))
+                .await
+                .ok();
+            Ok(wrap_output_envelope("proxmox.network.create", &output))
+        }
+        Err(error) => {
+            audit
+                .log(
+                    "proxmox.network.create",
+                    &host,
+                    "error",
+                    Some(&error.to_string()),
+                )
+                .await
+                .ok();
+            Err(error)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn network_update(
+    manager: Arc<ConnectionManager>,
+    confirmation: Arc<ConfirmationManager>,
+    host: Option<String>,
+    node: Option<String>,
+    iface: String,
+    address: Option<String>,
+    netmask: Option<String>,
+    gateway: Option<String>,
+    address6: Option<String>,
+    netmask6: Option<String>,
+    gateway6: Option<String>,
+    bridge_ports: Option<String>,
+    bond_mode: Option<String>,
+    vlan_id: Option<u32>,
+    vlan_raw_device: Option<String>,
+    autostart: Option<bool>,
+    comments: Option<String>,
+    iface_type: Option<String>,
+    dry_run: Option<bool>,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
+
+    if dry_run.unwrap_or(false) {
+        let output = format!(
+            "DRY RUN: Would update network interface '{}' on Proxmox host '{}'.\n\
+             Note: Network changes are staged — call proxmox.network.apply to make them live.",
+            iface, host
+        );
+        audit
+            .log("proxmox.network.update", &host, "dry_run", Some(&iface))
+            .await
+            .ok();
+        return Ok(wrap_output_envelope("proxmox.network.update", &output));
+    }
+
+    let params_json = serde_json::json!({
+        "host": host.clone(),
+        "node": node.clone(),
+        "iface": iface.clone(),
+        "address": address,
+        "netmask": netmask,
+        "gateway": gateway,
+        "address6": address6,
+        "netmask6": netmask6,
+        "gateway6": gateway6,
+        "bridge_ports": bridge_ports,
+        "bond_mode": bond_mode,
+        "vlan_id": vlan_id,
+        "vlan_raw_device": vlan_raw_device,
+        "autostart": autostart,
+        "comments": comments,
+        "type": iface_type,
+    })
+    .to_string();
+
+    if let Some(response) = confirmation
+        .check_and_maybe_require(
+            "proxmox.network.update",
+            None,
+            &format!(
+                "About to MODIFY network interface '{}' on Proxmox host '{}'. \
+                 Changing network configuration can break connectivity.",
+                iface, host
+            ),
+            &params_json,
+        )
+        .await?
+    {
+        audit
+            .log(
+                "proxmox.network.update",
+                &host,
+                "confirmation_required",
+                Some(&iface),
+            )
+            .await
+            .ok();
+        return Ok(response);
+    }
+
+    network_update_confirmed(
+        manager, host, node, iface, address, netmask, gateway, address6, netmask6, gateway6,
+        bridge_ports, bond_mode, vlan_id, vlan_raw_device, autostart, comments, iface_type, audit,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn network_update_confirmed(
+    manager: Arc<ConnectionManager>,
+    host: String,
+    node: Option<String>,
+    iface: String,
+    address: Option<String>,
+    netmask: Option<String>,
+    gateway: Option<String>,
+    address6: Option<String>,
+    netmask6: Option<String>,
+    gateway6: Option<String>,
+    bridge_ports: Option<String>,
+    bond_mode: Option<String>,
+    vlan_id: Option<u32>,
+    vlan_raw_device: Option<String>,
+    autostart: Option<bool>,
+    comments: Option<String>,
+    iface_type: Option<String>,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let result: Result<String> = async {
+        let client = manager.get_proxmox(&host)?;
+        let node_name = client.resolve_node(node.as_deref()).await?;
+        let path = format!("/nodes/{}/network/{}", node_name, iface);
+
+        let mut params: Vec<(&str, String)> = Vec::new();
+        if let Some(ref v) = iface_type { params.push(("type", v.clone())); }
+        if let Some(ref v) = address { params.push(("address", v.clone())); }
+        if let Some(ref v) = netmask { params.push(("netmask", v.clone())); }
+        if let Some(ref v) = gateway { params.push(("gateway", v.clone())); }
+        if let Some(ref v) = address6 { params.push(("address6", v.clone())); }
+        if let Some(ref v) = netmask6 { params.push(("netmask6", v.clone())); }
+        if let Some(ref v) = gateway6 { params.push(("gateway6", v.clone())); }
+        if let Some(ref v) = bridge_ports { params.push(("bridge_ports", v.clone())); }
+        if let Some(ref v) = bond_mode { params.push(("bond_mode", v.clone())); }
+        if let Some(v) = vlan_id { params.push(("vlan-id", v.to_string())); }
+        if let Some(ref v) = vlan_raw_device { params.push(("vlan-raw-device", v.clone())); }
+        if let Some(v) = autostart { params.push(("autostart", if v { "1" } else { "0" }.to_string())); }
+        if let Some(ref v) = comments { params.push(("comments", v.clone())); }
+
+        let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        client.put(&path, &params_ref).await?;
+
+        Ok(format!(
+            "Updated network interface '{}' on node '{}' (host: '{}').\n\
+             Note: This change is STAGED. Call proxmox.network.apply to make it live.",
+            iface, node_name, host
+        ))
+    }
+    .await;
+
+    match result {
+        Ok(output) => {
+            audit
+                .log("proxmox.network.update", &host, "success", Some(&iface))
+                .await
+                .ok();
+            Ok(wrap_output_envelope("proxmox.network.update", &output))
+        }
+        Err(error) => {
+            audit
+                .log(
+                    "proxmox.network.update",
+                    &host,
+                    "error",
+                    Some(&error.to_string()),
+                )
+                .await
+                .ok();
+            Err(error)
+        }
+    }
+}
+
+pub async fn network_delete(
+    manager: Arc<ConnectionManager>,
+    confirmation: Arc<ConfirmationManager>,
+    host: Option<String>,
+    node: Option<String>,
+    iface: String,
+    dry_run: Option<bool>,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
+
+    if dry_run.unwrap_or(false) {
+        let output = format!(
+            "DRY RUN: Would delete network interface '{}' on Proxmox host '{}'.\n\
+             Note: Network changes are staged — call proxmox.network.apply to make them live.",
+            iface, host
+        );
+        audit
+            .log("proxmox.network.delete", &host, "dry_run", Some(&iface))
+            .await
+            .ok();
+        return Ok(wrap_output_envelope("proxmox.network.delete", &output));
+    }
+
+    let params_json = serde_json::json!({
+        "host": host.clone(),
+        "node": node.clone(),
+        "iface": iface.clone(),
+    })
+    .to_string();
+
+    if let Some(response) = confirmation
+        .check_and_maybe_require(
+            "proxmox.network.delete",
+            None,
+            &format!(
+                "About to DELETE network interface '{}' on Proxmox host '{}'. \
+                 Removing a bridge can isolate VMs that depend on it.",
+                iface, host
+            ),
+            &params_json,
+        )
+        .await?
+    {
+        audit
+            .log(
+                "proxmox.network.delete",
+                &host,
+                "confirmation_required",
+                Some(&iface),
+            )
+            .await
+            .ok();
+        return Ok(response);
+    }
+
+    network_delete_confirmed(manager, host, node, iface, audit).await
+}
+
+pub async fn network_delete_confirmed(
+    manager: Arc<ConnectionManager>,
+    host: String,
+    node: Option<String>,
+    iface: String,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let result: Result<String> = async {
+        let client = manager.get_proxmox(&host)?;
+        let node_name = client.resolve_node(node.as_deref()).await?;
+        let path = format!("/nodes/{}/network/{}", node_name, iface);
+        client.delete(&path).await?;
+
+        Ok(format!(
+            "Deleted network interface '{}' on node '{}' (host: '{}').\n\
+             Note: This change is STAGED. Call proxmox.network.apply to make it live.",
+            iface, node_name, host
+        ))
+    }
+    .await;
+
+    match result {
+        Ok(output) => {
+            audit
+                .log("proxmox.network.delete", &host, "success", Some(&iface))
+                .await
+                .ok();
+            Ok(wrap_output_envelope("proxmox.network.delete", &output))
+        }
+        Err(error) => {
+            audit
+                .log(
+                    "proxmox.network.delete",
+                    &host,
+                    "error",
+                    Some(&error.to_string()),
+                )
+                .await
+                .ok();
+            Err(error)
+        }
+    }
+}
+
+pub async fn network_apply(
+    manager: Arc<ConnectionManager>,
+    confirmation: Arc<ConfirmationManager>,
+    host: Option<String>,
+    node: Option<String>,
+    dry_run: Option<bool>,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let host = host.map_or_else(|| default_proxmox_host(&manager), Ok)?;
+
+    if dry_run.unwrap_or(false) {
+        let output = format!(
+            "DRY RUN: Would apply all pending network configuration changes on Proxmox host '{}'.\n\
+             WARNING: Applying bad network config can isolate the host.",
+            host
+        );
+        audit
+            .log("proxmox.network.apply", &host, "dry_run", None)
+            .await
+            .ok();
+        return Ok(wrap_output_envelope("proxmox.network.apply", &output));
+    }
+
+    let params_json = serde_json::json!({
+        "host": host.clone(),
+        "node": node.clone(),
+    })
+    .to_string();
+
+    if let Some(response) = confirmation
+        .check_and_maybe_require(
+            "proxmox.network.apply",
+            None,
+            &format!(
+                "About to APPLY all pending network changes on Proxmox host '{}'. \
+                 Applying bad config to the management bridge (vmbr0) can isolate the host.",
+                host
+            ),
+            &params_json,
+        )
+        .await?
+    {
+        audit
+            .log(
+                "proxmox.network.apply",
+                &host,
+                "confirmation_required",
+                None,
+            )
+            .await
+            .ok();
+        return Ok(response);
+    }
+
+    network_apply_confirmed(manager, host, node, audit).await
+}
+
+pub async fn network_apply_confirmed(
+    manager: Arc<ConnectionManager>,
+    host: String,
+    node: Option<String>,
+    audit: Arc<AuditLogger>,
+) -> Result<String> {
+    let result: Result<String> = async {
+        let client = manager.get_proxmox(&host)?;
+        let node_name = client.resolve_node(node.as_deref()).await?;
+        let path = format!("/nodes/{}/network", node_name);
+        client.put(&path, &[]).await?;
+
+        Ok(format!(
+            "Applied pending network configuration changes on node '{}' (host: '{}').\n\
+             Network changes are now live.",
+            node_name, host
+        ))
+    }
+    .await;
+
+    match result {
+        Ok(output) => {
+            audit
+                .log("proxmox.network.apply", &host, "success", None)
+                .await
+                .ok();
+            Ok(wrap_output_envelope("proxmox.network.apply", &output))
+        }
+        Err(error) => {
+            audit
+                .log(
+                    "proxmox.network.apply",
+                    &host,
+                    "error",
+                    Some(&error.to_string()),
+                )
+                .await
+                .ok();
+            Err(error)
+        }
     }
 }
 
