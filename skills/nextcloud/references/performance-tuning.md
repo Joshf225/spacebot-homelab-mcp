@@ -137,12 +137,14 @@ Parameter explanations:
 
 Enable temporarily for diagnosis:
 ```
-ssh.exec(host="<DOCKER_HOST>", command="docker exec nextcloud-db mariadb -u root -p<PASSWORD> -e \"SET GLOBAL slow_query_log=1; SET GLOBAL long_query_time=1;\"")
+ssh.exec(host="<DOCKER_HOST>", command="docker exec --env MYSQL_PWD nextcloud-db mariadb -u root -e \"SET GLOBAL slow_query_log=1; SET GLOBAL long_query_time=1;\"")
 ```
+
+Set `MYSQL_PWD` securely in the remote shell environment before running the command.
 
 Check slow queries:
 ```
-ssh.exec(host="<DOCKER_HOST>", command="docker exec nextcloud-db mariadb -u root -p<PASSWORD> -e \"SHOW GLOBAL STATUS LIKE 'Slow_queries';\"")
+ssh.exec(host="<DOCKER_HOST>", command="docker exec --env MYSQL_PWD nextcloud-db mariadb -u root -e \"SHOW GLOBAL STATUS LIKE 'Slow_queries';\"")
 ```
 
 Disable when done to avoid log growth.

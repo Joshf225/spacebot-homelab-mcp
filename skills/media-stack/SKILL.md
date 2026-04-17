@@ -62,7 +62,8 @@ Additionally, the following tools are used for Compose workflows and host manage
 | `ssh.upload` | Upload files (compose files, configs) to Docker hosts | No |
 | `ssh.download` | Download files from Docker hosts | No |
 | `confirm_operation` | Confirm a destructive operation with a token | N/A |
-| `audit.log` | Log an operation for audit trail | No |
+| `audit.verify_operation` | Verify a logged audit operation | No |
+| `audit.verify_container_state` | Verify a logged container state audit entry | No |
 
 ## Environment variables
 
@@ -401,7 +402,7 @@ After deployment:
    ```
    If any container is not "Up", check logs:
    ```
-   docker.container.logs(host="<DOCKER_HOST>", name="<SERVICE_NAME>", tail=50)
+   docker.container.logs(host="<DOCKER_HOST>", container="<SERVICE_NAME>", tail=50)
    ```
 
 8. **Configure Prowlarr first:**
@@ -411,7 +412,7 @@ After deployment:
 
 9. **Configure qBittorrent:**
    - Access `http://<DOCKER_HOST>:8080`
-   - Check logs for temporary password: `docker.container.logs(host="<DOCKER_HOST>", name="qbittorrent", tail=20)`
+   - Check logs for temporary password: `docker.container.logs(host="<DOCKER_HOST>", container="qbittorrent", tail=20)`
    - Change password
    - Set download paths and categories (movies, tv)
 
