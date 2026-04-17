@@ -292,7 +292,7 @@ environment:
 
 2. **Back up database AND data directory before upgrades.** Database backup:
    ```
-   ssh.exec(host="<DOCKER_HOST>", command="docker exec nextcloud-db mariadb-dump -u root -p<MYSQL_ROOT_PASSWORD> nextcloud > /opt/nextcloud/backup-$(date +%Y%m%d).sql")
+   ssh.exec(host="<DOCKER_HOST>", command="docker exec nextcloud-db sh -lc 'MYSQL_PWD=\"$MYSQL_ROOT_PASSWORD\" mariadb-dump -u root nextcloud' > /opt/nextcloud/backup-$(date +%Y%m%d).sql")
    ```
    Data backup: snapshot or rsync `/opt/nextcloud/data`.
 
@@ -416,7 +416,7 @@ environment:
 
 3. **Back up database:**
    ```
-   ssh.exec(host="<DOCKER_HOST>", command="docker exec -e MYSQL_PWD=<MYSQL_ROOT_PASSWORD> nextcloud-db mariadb-dump -u root nextcloud | gzip > /opt/nextcloud/backup-pre-upgrade-$(date +%Y%m%d).sql.gz")
+   ssh.exec(host="<DOCKER_HOST>", command="docker exec nextcloud-db sh -lc 'MYSQL_PWD=\"$MYSQL_ROOT_PASSWORD\" mariadb-dump -u root nextcloud' | gzip > /opt/nextcloud/backup-pre-upgrade-$(date +%Y%m%d).sql.gz")
    ```
 
 4. **Back up data (or ensure recent snapshot exists):**

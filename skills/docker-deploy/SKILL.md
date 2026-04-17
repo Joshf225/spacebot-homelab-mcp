@@ -310,11 +310,10 @@ docker.container.create(
   host="<DOCKER_HOST>",
   name="jellyfin",
   image="lscr.io/linuxserver/jellyfin:latest",
-  ports=["8096:8096"],
+  ports={"8096": "8096"},
   env=["PUID=1000", "PGID=1000", "NVIDIA_VISIBLE_DEVICES=all"],
   volumes=["/opt/docker/jellyfin/config:/config", "/mnt/media:/media:ro"],
-  restart_policy="unless-stopped",
-  runtime="nvidia"
+  restart_policy="unless-stopped"
 )
 ```
 

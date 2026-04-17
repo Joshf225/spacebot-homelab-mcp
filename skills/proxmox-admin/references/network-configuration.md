@@ -239,6 +239,8 @@ proxmox.network.create(
 proxmox.network.apply()
 ```
 
+Use `slaves` for bond interfaces. `bridge_ports` is only for bridge interfaces.
+
 ### Modify an existing interface
 
 ```text

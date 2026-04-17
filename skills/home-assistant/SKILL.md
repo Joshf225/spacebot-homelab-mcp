@@ -481,7 +481,7 @@ Environment variables:
 
 12. **(If using Zigbee2MQTT) Verify Zigbee2MQTT is connected:**
     ```
-    docker.container.logs(host="<DOCKER_HOST>", name="zigbee2mqtt", tail=30)
+    docker.container.logs(host="<DOCKER_HOST>", container="zigbee2mqtt", tail=30)
     ```
     Look for "Zigbee2MQTT started" and "Connected to MQTT server". Access Zigbee2MQTT UI at `http://<DOCKER_HOST>:8080`.
 
@@ -516,7 +516,7 @@ Environment variables:
 
 5. Check logs for migration errors:
    ```
-   docker.container.logs(host="<DOCKER_HOST>", name="homeassistant", tail=50)
+   docker.container.logs(host="<DOCKER_HOST>", container="homeassistant", tail=50)
    ```
 
 ### Adding a companion service to an existing deployment

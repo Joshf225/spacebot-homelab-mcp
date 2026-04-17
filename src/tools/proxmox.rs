@@ -3004,6 +3004,95 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
+fn build_network_ports_params(
+    iface_type: &str,
+    bridge_ports: Option<&str>,
+    slaves: Option<&str>,
+) -> Result<Vec<(&'static str, String)>> {
+    if bridge_ports.is_some() && slaves.is_some() {
+        return Err(anyhow!(
+            "Specify only one of bridge_ports or slaves for interface type '{}'.",
+            iface_type
+        ));
+    }
+
+    match iface_type {
+        "bridge" | "OVSBridge" => {
+            if slaves.is_some() {
+                return Err(anyhow!(
+                    "slaves is only valid for bond interfaces; use bridge_ports for type '{}'.",
+                    iface_type
+                ));
+            }
+
+            Ok(bridge_ports
+                .map(|value| vec![("bridge_ports", value.to_string())])
+                .unwrap_or_default())
+        }
+        "bond" | "OVSBond" => Ok(slaves
+            .or(bridge_ports)
+            .map(|value| vec![("slaves", value.to_string())])
+            .unwrap_or_default()),
+        _ => {
+            if bridge_ports.is_some() {
+                return Err(anyhow!(
+                    "bridge_ports is only valid for bridge interfaces; interface type '{}' does not support it.",
+                    iface_type
+                ));
+            }
+            if slaves.is_some() {
+                return Err(anyhow!(
+                    "slaves is only valid for bond interfaces; interface type '{}' does not support it.",
+                    iface_type
+                ));
+            }
+
+            Ok(Vec::new())
+        }
+    }
+}
+
+async fn resolve_network_interface_type(
+    client: &ProxmoxClient,
+    node_name: &str,
+    iface: &str,
+) -> Result<String> {
+    let response = client
+        .get(&format!("/nodes/{}/network/{}", node_name, iface))
+        .await?;
+
+    response
+        .get("type")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .ok_or_else(|| {
+            anyhow!(
+                "Could not determine current type for network interface '{}'.",
+                iface
+            )
+        })
+}
+
+async fn build_network_ports_params_for_update(
+    client: &ProxmoxClient,
+    node_name: &str,
+    iface: &str,
+    iface_type: Option<&str>,
+    bridge_ports: Option<&str>,
+    slaves: Option<&str>,
+) -> Result<Vec<(&'static str, String)>> {
+    if bridge_ports.is_none() && slaves.is_none() {
+        return Ok(Vec::new());
+    }
+
+    let effective_type = match iface_type {
+        Some(value) => value.to_string(),
+        None => resolve_network_interface_type(client, node_name, iface).await?,
+    };
+
+    build_network_ports_params(&effective_type, bridge_ports, slaves)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn network_create(
     manager: Arc<ConnectionManager>,
@@ -3018,6 +3107,7 @@ pub async fn network_create(
     netmask6: Option<String>,
     gateway6: Option<String>,
     bridge_ports: Option<String>,
+    slaves: Option<String>,
     bond_mode: Option<String>,
     vlan_id: Option<u32>,
     vlan_raw_device: Option<String>,
@@ -3066,9 +3156,11 @@ pub async fn network_create(
         if let Some(ref v) = gateway6 {
             params.push(("gateway6", v.clone()));
         }
-        if let Some(ref v) = bridge_ports {
-            params.push(("bridge_ports", v.clone()));
-        }
+        params.extend(build_network_ports_params(
+            &iface_type,
+            bridge_ports.as_deref(),
+            slaves.as_deref(),
+        )?);
         if let Some(ref v) = bond_mode {
             params.push(("bond_mode", v.clone()));
         }
@@ -3133,6 +3225,7 @@ pub async fn network_update(
     netmask6: Option<String>,
     gateway6: Option<String>,
     bridge_ports: Option<String>,
+    slaves: Option<String>,
     bond_mode: Option<String>,
     vlan_id: Option<u32>,
     vlan_raw_device: Option<String>,
@@ -3168,6 +3261,7 @@ pub async fn network_update(
         "netmask6": netmask6,
         "gateway6": gateway6,
         "bridge_ports": bridge_ports,
+        "slaves": slaves,
         "bond_mode": bond_mode,
         "vlan_id": vlan_id,
         "vlan_raw_device": vlan_raw_device,
@@ -3214,6 +3308,7 @@ pub async fn network_update(
         netmask6,
         gateway6,
         bridge_ports,
+        slaves,
         bond_mode,
         vlan_id,
         vlan_raw_device,
@@ -3238,6 +3333,7 @@ pub async fn network_update_confirmed(
     netmask6: Option<String>,
     gateway6: Option<String>,
     bridge_ports: Option<String>,
+    slaves: Option<String>,
     bond_mode: Option<String>,
     vlan_id: Option<u32>,
     vlan_raw_device: Option<String>,
@@ -3273,9 +3369,17 @@ pub async fn network_update_confirmed(
         if let Some(ref v) = gateway6 {
             params.push(("gateway6", v.clone()));
         }
-        if let Some(ref v) = bridge_ports {
-            params.push(("bridge_ports", v.clone()));
-        }
+        params.extend(
+            build_network_ports_params_for_update(
+                &client,
+                &node_name,
+                &iface,
+                iface_type.as_deref(),
+                bridge_ports.as_deref(),
+                slaves.as_deref(),
+            )
+            .await?,
+        );
         if let Some(ref v) = bond_mode {
             params.push(("bond_mode", v.clone()));
         }
@@ -3532,8 +3636,8 @@ pub async fn network_apply_confirmed(
 #[cfg(test)]
 mod tests {
     use super::{
-        AutoVmidRetryPolicy, exhausted_auto_vmid_error, is_duplicate_vmid_conflict,
-        validate_vm_create_platform_inputs,
+        AutoVmidRetryPolicy, build_network_ports_params, exhausted_auto_vmid_error,
+        is_duplicate_vmid_conflict, validate_vm_create_platform_inputs,
     };
 
     #[test]
@@ -3609,5 +3713,30 @@ mod tests {
         assert!(message.contains("proxmox.vm.create failed after 3 auto-VMID conflict retries"));
         assert!(message.contains("Pass an explicit vmid"));
         assert!(message.contains("next_vmid_retry_attempts/next_vmid_retry_backoff_ms"));
+    }
+
+    #[test]
+    fn bond_ports_are_sent_as_slaves() {
+        let params = build_network_ports_params("bond", Some("eno1 eno2"), None).unwrap();
+
+        assert_eq!(params, vec![("slaves", "eno1 eno2".to_string())]);
+    }
+
+    #[test]
+    fn bridge_ports_stay_on_bridge_interfaces() {
+        let params = build_network_ports_params("bridge", Some("eno2"), None).unwrap();
+
+        assert_eq!(params, vec![("bridge_ports", "eno2".to_string())]);
+    }
+
+    #[test]
+    fn bridge_rejects_slaves_param() {
+        let error = build_network_ports_params("bridge", None, Some("eno1 eno2")).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("slaves is only valid for bond interfaces")
+        );
     }
 }

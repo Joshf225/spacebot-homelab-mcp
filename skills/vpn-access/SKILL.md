@@ -59,6 +59,8 @@ Additionally, the following tools are used for Compose workflows and host manage
 | `audit.verify_operation` | Verify a logged audit operation | No |
 | `audit.verify_container_state` | Verify a logged container state audit entry | No |
 
+Audit logs are emitted implicitly by each tool and are not available as a callable `audit.log` tool.
+
 ## Environment variables
 
 | Placeholder | Meaning | Example |

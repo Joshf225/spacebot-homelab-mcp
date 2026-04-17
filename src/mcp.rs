@@ -445,8 +445,10 @@ struct ProxmoxNetworkCreateArgs {
     pub netmask6: Option<String>,
     /// IPv6 gateway
     pub gateway6: Option<String>,
-    /// Slave/port interfaces for bridges and bonds (e.g. "eno1 eno2")
+    /// Member interfaces for bridge types (e.g. "eno2" or "bond0")
     pub bridge_ports: Option<String>,
+    /// Slave interfaces for bond types (e.g. "eno1 eno2")
+    pub slaves: Option<String>,
     /// Bond mode (e.g. "balance-rr", "active-backup", "802.3ad")
     pub bond_mode: Option<String>,
     /// VLAN tag ID (1-4094)
@@ -481,8 +483,10 @@ struct ProxmoxNetworkUpdateArgs {
     pub netmask6: Option<String>,
     /// IPv6 gateway
     pub gateway6: Option<String>,
-    /// Slave/port interfaces for bridges and bonds (e.g. "eno1 eno2")
+    /// Member interfaces for bridge types (e.g. "eno2" or "bond0")
     pub bridge_ports: Option<String>,
+    /// Slave interfaces for bond types (e.g. "eno1 eno2")
+    pub slaves: Option<String>,
     /// Bond mode (e.g. "balance-rr", "active-backup", "802.3ad")
     pub bond_mode: Option<String>,
     /// VLAN tag ID (1-4094)
@@ -1651,6 +1655,7 @@ impl HomelabMcpServer {
             args.netmask6,
             args.gateway6,
             args.bridge_ports,
+            args.slaves,
             args.bond_mode,
             args.vlan_id,
             args.vlan_raw_device,
@@ -1689,6 +1694,7 @@ impl HomelabMcpServer {
             args.netmask6,
             args.gateway6,
             args.bridge_ports,
+            args.slaves,
             args.bond_mode,
             args.vlan_id,
             args.vlan_raw_device,
@@ -2217,6 +2223,7 @@ impl HomelabMcpServer {
                     params.netmask6,
                     params.gateway6,
                     params.bridge_ports,
+                    params.slaves,
                     params.bond_mode,
                     params.vlan_id,
                     params.vlan_raw_device,
